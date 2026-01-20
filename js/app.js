@@ -6,74 +6,47 @@ let profile = null;
 let cart = [];
 
 window.onload = async () => {
+    // 1. Loading
     const app = document.getElementById('app-view');
-    if(app) app.innerHTML = '<div class="flex h-screen items-center justify-center flex-col"><div class="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin mb-4"></div><p class="text-xs font-bold text-gray-400 tracking-widest">SYSTEM INITIALIZING...</p></div>';
+    if(app) app.innerHTML = '<div class="flex h-screen items-center justify-center flex-col"><div class="w-10 h-10 border-4 border-black border-t-transparent rounded-full animate-spin mb-4"></div><p class="text-xs font-bold text-gray-400 tracking-widest">CONNECTING...</p></div>';
 
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
 
     try {
-        const userEmail = session.user.email;
-        const userId = session.user.id;
+        // 2. THE MASTER OVERRIDE (RPC CALL)
+        // Tunaiamuru database iangalie invite sasa hivi na ku-link.
+        const { data: linkStatus, error: rpcError } = await supabase.rpc('claim_invite', { 
+            user_email: session.user.email, 
+            user_id: session.user.id 
+        });
 
-        // 1. JARIBU KUVUTA PROFILE
-        profile = await getCurrentProfile(userId);
+        if (rpcError) console.error("RPC Error:", rpcError);
 
-        // 2. LOGIC KUU: KAMA HANA PROFILE AU HANA ORGANIZATION
-        if (!profile || !profile.organization_id) {
-            
-            console.log("Profile incomplete. Searching for Invites...");
+        // 3. Vuta Profile (Baada ya RPC kufanya kazi)
+        profile = await getCurrentProfile(session.user.id);
 
-            // TAFUTA INVITE (CASE INSENSITIVE)
-            // Tunatumia 'ilike' kuhakikisha herufi kubwa/ndogo hazisumbui
-            const { data: invite } = await supabase
-                .from('staff_invites')
-                .select('*')
-                .ilike('email', userEmail) 
-                .maybeSingle();
-
-            if (invite) {
-                console.log("INVITE FOUND! Creating Profile Manually...");
-                
-                // FORCE CREATE PROFILE
-                const { data: newProf, error } = await supabase.from('profiles').upsert({
-                    id: userId,
-                    email: userEmail,
-                    full_name: 'Staff Member',
-                    organization_id: invite.organization_id,
-                    role: invite.role,
-                    assigned_location_id: invite.assigned_location_id
-                }).select().single();
-
-                if (error) {
-                    console.error("Profile Creation Failed:", error);
-                    alert("System Error: Could not link profile. Please contact Admin.");
-                    logout();
-                    return;
-                }
-
-                // MARK INVITE AS ACCEPTED
-                await supabase.from('staff_invites').update({ status: 'accepted' }).eq('id', invite.id);
-                
-                // TUMIA PROFILE HII
-                profile = newProf;
-
-            } else {
-                // KAMA HANA INVITE KWELI:
-                // Mpeleke Setup (Manager Mpya)
-                console.log("No Invite Found. Redirecting to Setup.");
-                window.location.href = 'setup.html';
-                return;
-            }
+        // 4. MAAMUZI (ROUTING)
+        if (linkStatus === 'LINKED') {
+             // Invite ilikutwa na imeunganishwa. Piga Dashboard.
+             console.log("Invite Linked. Proceeding.");
+        } 
+        else if (!profile || !profile.organization_id) {
+             // Kama RPC haikuona invite, NA profile haina kampuni -> Nenda Setup.
+             console.log("No Link, No Org. Setup Required.");
+             window.location.href = 'setup.html';
+             return;
         }
 
-        // 3. LOAD DASHBOARD
+        // 5. DASHBOARD READY
+        if(!profile) profile = await getCurrentProfile(session.user.id); // Double check
+        
         document.getElementById('userName').innerText = profile.full_name || 'User';
         document.getElementById('userRole').innerText = (profile.role || 'staff').replace('_', ' ');
         document.getElementById('avatar').innerText = (profile.full_name || 'U').charAt(0);
         window.logoutAction = logout;
 
-        // Handle Mobile Menu
+        // Mobile Menu
         const sb = document.getElementById('sidebar');
         if(document.getElementById('mobile-menu-btn')) document.getElementById('mobile-menu-btn').addEventListener('click', () => sb.classList.remove('-translate-x-full'));
         if(document.getElementById('close-sidebar')) document.getElementById('close-sidebar').addEventListener('click', () => sb.classList.add('-translate-x-full'));
@@ -101,8 +74,7 @@ window.router = async (view) => {
     else if (view === 'approvals') await renderApprovals(app);
 };
 
-// --- CORE FUNCTIONS (Inventory, Bar, Staff, etc) ---
-
+// --- CORE FUNCTIONS (Standard) ---
 async function renderInventory(c){try{const d=await getInventory(profile.organization_id); const l=await getLocations(profile.organization_id); const r=d.map(i=>`<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${i.products?.name}</td><td class="p-4 text-xs text-gray-500">${i.locations?.name}</td><td class="p-4 font-mono font-bold">${Number(i.quantity).toFixed(1)} ${i.products?.unit}</td><td class="p-4 text-right">${profile.role==='manager'?`<button onclick="window.openTransfer('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] bg-black text-white px-2 py-1 rounded font-bold">Transfer</button>`:''}</td></tr>`).join(''); c.innerHTML=`<div id="transferModal" class="fixed inset-0 bg-black/50 hidden z-[60] flex items-center justify-center p-4"><div class="bg-white p-6 rounded-xl w-full max-w-sm"><h3 class="font-bold text-lg mb-4">Transfer Stock</h3><input id="tProdName" disabled class="input-field w-full mb-2 bg-gray-100"><input type="hidden" id="tProdId"><input type="hidden" id="tFromLoc"><label class="text-xs font-bold text-gray-500">To Location:</label><select id="tToLoc" class="input-field w-full mb-2 bg-white border p-2 rounded">${l.map(x=>`<option value="${x.id}">${x.name}</option>`).join('')}</select><label class="text-xs font-bold text-gray-500">Quantity:</label><input id="tQty" type="number" class="input-field w-full mb-4 border p-2 rounded"><button onclick="window.submitTransfer()" class="btn-black w-full py-3 rounded-xl font-bold">Transfer</button><button onclick="document.getElementById('transferModal').classList.add('hidden')" class="w-full mt-2 text-xs text-gray-500 py-2">Cancel</button></div></div><h1 class="text-2xl font-bold mb-6">Inventory Control</h1><div class="glass rounded-xl overflow-hidden"><table class="w-full text-left"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="p-4">Item</th><th class="p-4">Loc</th><th class="p-4">Qty</th><th class="p-4 text-right">Action</th></tr></thead><tbody>${r.length?r:'<tr><td colspan="4" class="p-6 text-center text-gray-400">No stock found.</td></tr>'}</tbody></table></div>`; }catch(e){c.innerHTML='Error loading inventory';}}
 async function renderSettings(c){try{const l=await getLocations(profile.organization_id); const r=l.map(x=>`<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${x.name}</td><td class="p-4"><span class="bg-gray-100 text-[10px] font-bold px-2 py-1 rounded uppercase">${x.type.replace('_',' ')}</span></td><td class="p-4 text-right"><button onclick="window.editLoc('${x.id}','${x.name}','${x.type}')" class="text-xs font-bold text-gray-400 hover:text-black">Edit</button></td></tr>`).join(''); c.innerHTML=`<div class="flex justify-between items-end mb-6"><h1 class="text-2xl font-bold">Settings</h1><button onclick="window.addLoc()" class="btn-black px-4 py-2 text-xs font-bold rounded-lg">+ Location</button></div><div class="glass rounded-xl overflow-hidden"><table class="w-full text-left"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="p-4">Name</th><th class="p-4">Type</th><th class="p-4 text-right">Action</th></tr></thead><tbody>${r}</tbody></table></div>`;}catch(e){c.innerHTML='Error settings';}}
 async function renderBar(c){try{const s=await getInventory(profile.organization_id); const i=s.filter(x=>x.quantity>0).map(x=>`<div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border p-4 rounded-xl cursor-pointer hover:shadow-md active:scale-95 transition"><div class="h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center mb-3 text-xl">🍺</div><h4 class="font-bold text-sm truncate">${x.products.name}</h4><div class="flex justify-between mt-2"><span class="text-xs font-bold">$${x.products.selling_price}</span><span class="text-[10px] text-gray-500">Qty: ${x.quantity}</span></div></div>`).join(''); c.innerHTML=`<div class="flex flex-col md:flex-row h-full gap-4"><div class="flex-1 overflow-y-auto"><h1 class="text-2xl font-bold mb-4">Bar POS</h1><div class="grid grid-cols-2 md:grid-cols-3 gap-3">${i.length?i:'<p class="col-span-3 text-gray-400">No stock.</p>'}</div></div><div class="w-full md:w-80 bg-white border md:border-l border-gray-200 p-4 flex flex-col rounded-xl"><h3 class="font-bold border-b pb-2 mb-2">Current Order</h3><div id="cart-list" class="flex-1 overflow-y-auto space-y-2 mb-2"><p class="text-center text-xs text-gray-400 mt-10">Empty</p></div><div class="pt-2 border-t"><div class="flex justify-between font-bold mb-4"><span>Total</span><span id="cart-total">$0.00</span></div><button onclick="window.checkout()" class="btn-black w-full py-3 rounded-xl font-bold text-sm">Charge</button></div></div></div>`; window.renderCart();}catch(e){c.innerHTML='Error Bar';}}
@@ -121,12 +93,12 @@ window.editLoc=(i,n,t)=>{document.getElementById('modal-content').innerHTML=`<h3
 window.uL=async(i)=>{try{await updateLocation(i, {name:document.getElementById('eL').value}); document.getElementById('modal').classList.add('hidden'); router('settings');}catch(e){alert(e.message);}}
 window.approve=async(i,s)=>{if(confirm(s+'?'))try{await respondToApproval(i,s,profile.id); router('approvals');}catch(e){alert(e.message);}}
 
-// --- MODAL YA INVITE (YENYE VALIDATION KALI) ---
+// --- INVITE MODAL WITH VALIDATION (FIXED) ---
 window.inviteModal=()=>{
     document.getElementById('modal-content').innerHTML=`
     <h3 class="font-bold mb-2">Invite Staff</h3>
     <form onsubmit="event.preventDefault();window.sI()">
-        <input id="iE" class="input-field w-full mb-2" placeholder="Email Address" required>
+        <input id="iE" class="input-field w-full mb-2" placeholder="Email Address" type="email">
         <select id="iR" class="input-field w-full mb-2 bg-white">
             <option value="storekeeper">Storekeeper</option>
             <option value="barman">Barman</option>
@@ -142,7 +114,7 @@ window.sI = async () => {
     const emailField = document.getElementById('iE');
     const roleField = document.getElementById('iR');
     
-    // CHECK 1: Email haipo
+    // VALIDATION: Zuia kutuma kama hamna email
     if (!emailField.value || emailField.value.trim() === "") {
         alert("Please enter a valid email address!");
         emailField.focus();
