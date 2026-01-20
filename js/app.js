@@ -4,18 +4,21 @@ import { supabase } from './supabase.js';
 
 let profile = null;
 let cart = [];
+let currentUserEmail = "";
 
 window.onload = async () => {
-    // 1. Loading
+    // 1. Loading UI
     const app = document.getElementById('app-view');
     if(app) app.innerHTML = '<div class="flex h-screen items-center justify-center flex-col"><div class="w-10 h-10 border-4 border-black border-t-transparent rounded-full animate-spin mb-4"></div><p class="text-xs font-bold text-gray-400 tracking-widest">CONNECTING...</p></div>';
 
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
+    
+    currentUserEmail = session.user.email; // Hifadhi email ya manager
 
     try {
-        // 2. THE MASTER OVERRIDE (RPC CALL)
-        // Tunaiamuru database iangalie invite sasa hivi na ku-link.
+        // 2. THE MASTER FIX: Call RPC to claim invite automatically
+        // Hii inahakikisha Database inamjua user hata kama trigger ilifeli
         const { data: linkStatus, error: rpcError } = await supabase.rpc('claim_invite', { 
             user_email: session.user.email, 
             user_id: session.user.id 
@@ -23,24 +26,23 @@ window.onload = async () => {
 
         if (rpcError) console.error("RPC Error:", rpcError);
 
-        // 3. Vuta Profile (Baada ya RPC kufanya kazi)
+        // 3. Get Profile (Now guaranteed to exist if invited)
         profile = await getCurrentProfile(session.user.id);
 
-        // 4. MAAMUZI (ROUTING)
+        // 4. Decision: Dashboard or Setup?
         if (linkStatus === 'LINKED') {
-             // Invite ilikutwa na imeunganishwa. Piga Dashboard.
-             console.log("Invite Linked. Proceeding.");
+            console.log("Invite Found & Linked. Access Granted.");
         } 
         else if (!profile || !profile.organization_id) {
-             // Kama RPC haikuona invite, NA profile haina kampuni -> Nenda Setup.
-             console.log("No Link, No Org. Setup Required.");
-             window.location.href = 'setup.html';
-             return;
+            console.log("No Link + No Org = New Manager. Go to Setup.");
+            window.location.href = 'setup.html';
+            return;
         }
 
-        // 5. DASHBOARD READY
-        if(!profile) profile = await getCurrentProfile(session.user.id); // Double check
-        
+        // 5. Final Profile Check
+        if(!profile) profile = await getCurrentProfile(session.user.id);
+
+        // 6. Load Dashboard
         document.getElementById('userName').innerText = profile.full_name || 'User';
         document.getElementById('userRole').innerText = (profile.role || 'staff').replace('_', ' ');
         document.getElementById('avatar').innerText = (profile.full_name || 'U').charAt(0);
@@ -80,7 +82,6 @@ async function renderSettings(c){try{const l=await getLocations(profile.organiza
 async function renderBar(c){try{const s=await getInventory(profile.organization_id); const i=s.filter(x=>x.quantity>0).map(x=>`<div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border p-4 rounded-xl cursor-pointer hover:shadow-md active:scale-95 transition"><div class="h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center mb-3 text-xl">🍺</div><h4 class="font-bold text-sm truncate">${x.products.name}</h4><div class="flex justify-between mt-2"><span class="text-xs font-bold">$${x.products.selling_price}</span><span class="text-[10px] text-gray-500">Qty: ${x.quantity}</span></div></div>`).join(''); c.innerHTML=`<div class="flex flex-col md:flex-row h-full gap-4"><div class="flex-1 overflow-y-auto"><h1 class="text-2xl font-bold mb-4">Bar POS</h1><div class="grid grid-cols-2 md:grid-cols-3 gap-3">${i.length?i:'<p class="col-span-3 text-gray-400">No stock.</p>'}</div></div><div class="w-full md:w-80 bg-white border md:border-l border-gray-200 p-4 flex flex-col rounded-xl"><h3 class="font-bold border-b pb-2 mb-2">Current Order</h3><div id="cart-list" class="flex-1 overflow-y-auto space-y-2 mb-2"><p class="text-center text-xs text-gray-400 mt-10">Empty</p></div><div class="pt-2 border-t"><div class="flex justify-between font-bold mb-4"><span>Total</span><span id="cart-total">$0.00</span></div><button onclick="window.checkout()" class="btn-black w-full py-3 rounded-xl font-bold text-sm">Charge</button></div></div></div>`; window.renderCart();}catch(e){c.innerHTML='Error Bar';}}
 async function renderStaff(c){try{const s=await getStaff(profile.organization_id); const r=s.map(x=>`<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${x.full_name}</td><td class="p-4 text-xs text-gray-500">${x.email}</td><td class="p-4"><span class="bg-blue-50 text-blue-600 text-[10px] font-bold px-2 py-1 rounded uppercase">${x.role.replace('_',' ')}</span></td></tr>`).join(''); c.innerHTML=`<div class="flex justify-between items-end mb-6"><h1 class="text-2xl font-bold">Team</h1><button onclick="window.inviteModal()" class="btn-black px-4 py-2 text-xs font-bold rounded-lg">+ Invite</button></div><div class="glass rounded-xl overflow-hidden"><table class="w-full text-left"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="p-4">Name</th><th class="p-4">Email</th><th class="p-4">Role</th></tr></thead><tbody>${r}</tbody></table></div>`;}catch(e){c.innerHTML='Error Staff';}}
 async function renderApprovals(c){try{const q=await getPendingApprovals(profile.organization_id); const r=q.map(x=>`<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${x.products?.name}</td><td class="p-4 text-xs">${x.quantity}</td><td class="p-4 text-xs text-gray-500">${x.profiles?.full_name}</td><td class="p-4 text-right space-x-2"><button onclick="window.approve('${x.id}','approved')" class="text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded font-bold">Approve</button><button onclick="window.approve('${x.id}','rejected')" class="text-[10px] bg-red-50 text-red-600 px-2 py-1 rounded font-bold">Reject</button></td></tr>`).join(''); c.innerHTML=`<h1 class="text-2xl font-bold mb-6">Approvals</h1><div class="glass rounded-xl overflow-hidden"><table class="w-full text-left"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="p-4">Item</th><th class="p-4">Qty</th><th class="p-4">By</th><th class="p-4 text-right">Action</th></tr></thead><tbody>${r.length?r:'<tr><td colspan="4" class="p-6 text-center text-gray-400">No requests.</td></tr>'}</tbody></table></div>`;}catch(e){c.innerHTML='Error Approvals';}}
-
 window.addCart=(n,p,i)=>{const x=cart.find(c=>c.id===i); if(x)x.qty++; else cart.push({name:n,price:p,id:i,qty:1}); window.renderCart();}
 window.renderCart=()=>{const l=document.getElementById('cart-list'),t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<p class="text-center text-xs text-gray-400 mt-10">Empty</p>';t.innerText='$0.00';return;} let tot=0; l.innerHTML=cart.map(i=>{tot+=i.price*i.qty; return `<div class="flex justify-between bg-gray-50 p-2 rounded mb-2"><div class="truncate w-24"><div class="text-xs font-bold">${i.name}</div><div class="text-[10px] text-gray-500">${i.qty} x $${i.price}</div></div><button onclick="window.remCart('${i.id}')" class="text-red-500 text-xs font-bold">x</button></div>`;}).join(''); t.innerText='$'+tot.toFixed(2);}
 window.remCart=(i)=>{cart=cart.filter(c=>c.id!==i); window.renderCart();}
@@ -93,7 +94,7 @@ window.editLoc=(i,n,t)=>{document.getElementById('modal-content').innerHTML=`<h3
 window.uL=async(i)=>{try{await updateLocation(i, {name:document.getElementById('eL').value}); document.getElementById('modal').classList.add('hidden'); router('settings');}catch(e){alert(e.message);}}
 window.approve=async(i,s)=>{if(confirm(s+'?'))try{await respondToApproval(i,s,profile.id); router('approvals');}catch(e){alert(e.message);}}
 
-// --- INVITE MODAL WITH VALIDATION (FIXED) ---
+// --- INVITE STAFF MODAL (FIXED) ---
 window.inviteModal=()=>{
     document.getElementById('modal-content').innerHTML=`
     <h3 class="font-bold mb-2">Invite Staff</h3>
@@ -114,10 +115,16 @@ window.sI = async () => {
     const emailField = document.getElementById('iE');
     const roleField = document.getElementById('iR');
     
-    // VALIDATION: Zuia kutuma kama hamna email
+    // VALIDATION 1: Check Empty
     if (!emailField.value || emailField.value.trim() === "") {
         alert("Please enter a valid email address!");
         emailField.focus();
+        return;
+    }
+
+    // VALIDATION 2: Check Self-Invite (Hii ndiyo mpya)
+    if (emailField.value.trim().toLowerCase() === currentUserEmail.trim().toLowerCase()) {
+        alert("You cannot invite yourself!");
         return;
     }
 
