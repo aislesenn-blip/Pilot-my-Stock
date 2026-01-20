@@ -1,41 +1,45 @@
 import { getSession, getCurrentProfile, logout } from './auth.js';
-import { getInventory, createLocation, getLocations } from './services.js';
+import { getInventory, getLocations, createLocation } from './services.js';
 import { supabase } from './supabase.js';
 import { formatDate } from './utils.js';
 
 let profile = null;
 
+// --- 1. MZIZI WA TATIZO UMETATULIWA HAPA ---
 window.onload = async () => {
-    // 1. Pata Session
+    // Angalia kama kuna Session
     const session = await getSession();
     if (!session) {
         window.location.href = 'index.html';
         return;
     }
 
-    // 2. Pata Profile
-    profile = await getCurrentProfile(session.user.id);
-    
-    // ULINZI DHIDI YA "SPINNING LOOP"
-    // Kama profile imefutwa database lakini user yuko logged in, mpeleke Setup
-    if(!profile || !profile.organization_id) {
-        window.location.href = 'setup.html';
-        return; // HII RETURN NDIO DAWA (Inazuia code isiendelee chini na kuganda)
-    }
-
-    // 3. Jaza Data za UI (Hii inafanyika tu kama profile ipo)
     try {
+        // Jaribu kuvuta Profile
+        profile = await getCurrentProfile(session.user.id);
+        
+        // LOGIC MPYA: KAMA PROFILE HAIPO (NULL), USIGANDE! NENDA SETUP.
+        // Hii ndio inazuia ile spinning ya milele
+        if (!profile || !profile.organization_id) {
+            console.warn("Profile not found or incomplete. Redirecting to Setup...");
+            window.location.href = 'setup.html';
+            return; 
+        }
+
+        // Kama Profile ipo, jaza UI
         document.getElementById('userName').innerText = profile.full_name || 'User';
         document.getElementById('userRole').innerText = (profile.role || 'staff').replace('_', ' ');
         document.getElementById('avatar').innerText = (profile.full_name || 'U').charAt(0);
         window.logoutAction = logout;
 
-        // 4. Fungua Inventory
+        // Anza Mfumo
         router('inventory');
-    } catch (e) {
-        console.error("UI Error:", e);
-        // Ikitokea error yoyote, mtoe nje aanze upya
-        logout(); 
+
+    } catch (error) {
+        console.error("Critical Error:", error);
+        // Ikitokea error yoyote mbaya, mtoe nje aanze upya badala ya kuganda
+        localStorage.clear();
+        window.location.href = 'index.html';
     }
 };
 
@@ -45,11 +49,15 @@ window.router = async (view) => {
     app.innerHTML = '<div class="flex items-center justify-center h-full"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div></div>';
     
     // Highlight Menu
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('bg-gray-50', 'text-black'));
+    document.querySelectorAll('.nav-item').forEach(b => {
+        b.classList.remove('bg-gray-50', 'text-black');
+        // Reset icons color if needed
+    });
     document.getElementById(`nav-${view}`)?.classList.add('bg-gray-50', 'text-black');
 
     if (view === 'inventory') await renderInventory(app);
     if (view === 'settings') await renderSettings(app);
+    // Ongeza modules zingine hapa (bar, staff, etc)
 };
 
 // --- VIEW: INVENTORY ---
@@ -69,7 +77,7 @@ async function renderInventory(container) {
             <div class="flex justify-between items-end mb-8 fade-in">
                 <div>
                     <h1 class="text-2xl font-bold tracking-tight">Inventory</h1>
-                    <p class="text-gray-500 mt-1">Live stock levels across all camps.</p>
+                    <p class="text-gray-500 mt-1">Live stock levels.</p>
                 </div>
             </div>
             <div class="glass rounded-2xl overflow-hidden fade-in shadow-sm">
@@ -82,7 +90,7 @@ async function renderInventory(container) {
             </div>
         `;
     } catch (err) {
-        container.innerHTML = `<div class="text-red-500 p-10 text-center">Error loading inventory: ${err.message}</div>`;
+        container.innerHTML = `<div class="text-red-500 p-10 text-center">Failed to load inventory. <br> <button onclick="window.location.reload()" class="underline">Retry</button></div>`;
     }
 }
 
@@ -120,7 +128,7 @@ async function renderSettings(container) {
             </div>
         `;
     } catch (err) {
-        container.innerHTML = `<div class="text-red-500 p-10 text-center">Error loading settings: ${err.message}</div>`;
+        container.innerHTML = `<div class="text-red-500 p-10 text-center">Failed to load settings.</div>`;
     }
 }
 
