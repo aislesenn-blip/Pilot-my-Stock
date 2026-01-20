@@ -7,16 +7,22 @@ export async function login(email, password) {
 }
 
 export async function register(email, password, fullName) {
-    // This triggers the 'handle_new_user' DB function
+    // TUMA JINA KAMA METADATA KWA AJILI YA DATABASE TRIGGER
     const { data, error } = await supabase.auth.signUp({
-        email, password,
-        options: { data: { full_name: fullName } }
+        email, 
+        password,
+        options: { 
+            data: { 
+                full_name: fullName 
+            } 
+        }
     });
     if (error) throw error;
     return data;
 }
 
 export async function logout() {
+    localStorage.clear();
     await supabase.auth.signOut();
     window.location.href = 'index.html';
 }
@@ -33,6 +39,6 @@ export async function getCurrentProfile(userId) {
         .select('*, organizations(name), locations(name, type)')
         .eq('id', userId)
         .single();
-    if (error && error.code === 'PGRST116') return null;
+    if (error) return null;
     return data;
 }
