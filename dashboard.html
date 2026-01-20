@@ -12,15 +12,18 @@
         .nav-active { background-color: #111827 !important; color: #FFFFFF !important; }
         .nav-item:hover { background-color: #F3F4F6; color: #111827; }
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 10px; }
-        .input-field { border: 1px solid #E5E7EB; padding: 12px; border-radius: 12px; outline: none; transition: 0.2s; background: #fff; width: 100%; font-size: 14px; color: #111827; font-weight: 500; }
+        
+        /* Billion Dollar Input Styling */
+        .input-field { border: 1px solid #E5E7EB; padding: 12px; border-radius: 12px; outline: none; transition: 0.2s; background: #fff; width: 100%; font-size: 14px; color: #111827; font-weight: 500; position: relative; }
         .input-field:focus { border-color: #000; box-shadow: 0 0 0 2px rgba(0,0,0,0.05); }
         .btn-black { background: #000; color: #fff; transition: 0.2s; cursor: pointer; } 
         .btn-black:hover { opacity: 0.8; transform: translateY(-1px); }
+        .btn-black:disabled { background: #9CA3AF; cursor: not-allowed; }
 
-        /* FIX: Dropdowns zisijifiche nyuma ya kuta za modal */
+        /* DROP-DOWN CLIPPING FIX */
         #modal-content { position: relative; z-index: 100; overflow: visible !important; }
-        #modal { display: none; }
-        #modal.flex { display: flex; }
+        .input-group { position: relative; z-index: 10; }
+        .input-group:focus-within { z-index: 50; } /* Hii inafanya input inayotumika ikae juu ya zingine */
         
         select.input-field { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239CA3AF'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px; cursor: pointer; }
     </style>
@@ -82,7 +85,7 @@
 
         <div id="app-view" class="flex-1 overflow-y-auto p-4 md:p-8 pb-20"></div>
 
-        <div id="modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] items-center justify-center p-4" onclick="window.closeModalOutside(event)">
+        <div id="modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm hidden z-[60] flex items-center justify-center p-4" onclick="window.closeModalOutside(event)">
             <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-8 animate-fade-in relative" id="modal-content" onclick="event.stopPropagation()">
                 </div>
         </div>
