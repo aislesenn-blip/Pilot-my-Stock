@@ -9,23 +9,20 @@
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #F9FAFB; }
         .glass { background: #FFFFFF; border: 1px solid #E5E7EB; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02); }
-        
-        /* Active State kwa Menu */
-        .nav-active { background-color: #111827 !important; color: #FFFFFF !important; shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .nav-active { background-color: #111827 !important; color: #FFFFFF !important; }
         .nav-item:hover { background-color: #F3F4F6; color: #111827; }
-        
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 10px; }
-        
-        .input-field { border: 1px solid #E5E7EB; padding: 12px; border-radius: 12px; outline: none; transition: 0.2s; background: #fff; width: 100%; font-size: 14px; }
+        .input-field { border: 1px solid #E5E7EB; padding: 12px; border-radius: 12px; outline: none; transition: 0.2s; background: #fff; width: 100%; font-size: 14px; color: #111827; font-weight: 500; }
         .input-field:focus { border-color: #000; box-shadow: 0 0 0 2px rgba(0,0,0,0.05); }
-        
         .btn-black { background: #000; color: #fff; transition: 0.2s; cursor: pointer; } 
         .btn-black:hover { opacity: 0.8; transform: translateY(-1px); }
 
-        /* Fix kwa Dropdowns kujificha ndani ya Modal */
-        #modal-content { position: relative; z-index: 70; overflow: visible !important; }
+        /* FIX: Dropdowns zisijifiche nyuma ya kuta za modal */
+        #modal-content { position: relative; z-index: 100; overflow: visible !important; }
+        #modal { display: none; }
+        #modal.flex { display: flex; }
         
-        .hidden { display: none; }
+        select.input-field { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239CA3AF'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px; cursor: pointer; }
     </style>
 </head>
 <body class="flex h-screen overflow-hidden text-gray-800">
@@ -85,8 +82,8 @@
 
         <div id="app-view" class="flex-1 overflow-y-auto p-4 md:p-8 pb-20"></div>
 
-        <div id="modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm hidden z-[60] flex items-center justify-center p-4" onclick="window.closeModalOutside(event)">
-            <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6 animate-fade-in" id="modal-content" onclick="event.stopPropagation()">
+        <div id="modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] items-center justify-center p-4" onclick="window.closeModalOutside(event)">
+            <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-8 animate-fade-in relative" id="modal-content" onclick="event.stopPropagation()">
                 </div>
         </div>
     </main>
