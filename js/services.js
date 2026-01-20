@@ -3,8 +3,6 @@ import { supabase } from './supabase.js';
 // --- PROFILE SERVICES ---
 
 export async function getCurrentProfile(userId) {
-    // HAPA NDIPO PENYE FIX: Tunatumia 'maybeSingle()' badala ya 'single()'
-    // Hii inazuia error kama profile haipo, na inaruhusu system kukupeleka Setup
     const { data, error } = await supabase
         .from('profiles')
         .select('*, organizations(name), locations(name, type)')
@@ -19,7 +17,6 @@ export async function getCurrentProfile(userId) {
 }
 
 export async function createOrganization(name, userId) {
-    // 1. Create Organization
     const { data: org, error: orgError } = await supabase
         .from('organizations')
         .insert({ name: name, created_by: userId })
@@ -28,13 +25,9 @@ export async function createOrganization(name, userId) {
     
     if (orgError) throw orgError;
 
-    // 2. Update Profile to be Manager
     const { error: profileError } = await supabase
         .from('profiles')
-        .update({ 
-            organization_id: org.id, 
-            role: 'manager' 
-        })
+        .update({ organization_id: org.id, role: 'manager' })
         .eq('id', userId);
 
     if (profileError) throw profileError;
@@ -64,6 +57,19 @@ export async function createLocation(orgId, name, type, parentId = null) {
             type: type,
             parent_location_id: parentId
         })
+        .select()
+        .single();
+
+    if (error) throw error;
+    return data;
+}
+
+// HII HAPA FUNCTION YA KU-EDIT ILIYOKUWA INAKOSEKANA
+export async function updateLocation(locId, updates) {
+    const { data, error } = await supabase
+        .from('locations')
+        .update(updates)
+        .eq('id', locId)
         .select()
         .single();
 
