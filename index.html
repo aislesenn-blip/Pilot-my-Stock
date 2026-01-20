@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pilot my Stock | Sign In</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body class="flex items-center justify-center h-screen bg-[#F5F5F7]">
+    
+    <div class="glass w-full max-w-sm p-10 rounded-3xl fade-in shadow-xl">
+        <div class="mb-10 text-center">
+            <h1 class="text-2xl font-bold text-gray-900 tracking-tight">Pilot my Stock.</h1>
+            <p class="text-sm text-gray-500 mt-2">Enterprise Operating System</p>
+        </div>
+
+        <form id="authForm" class="space-y-5">
+            <div>
+                <label class="text-label">Work Email</label>
+                <input type="email" id="email" class="input-field w-full p-4 rounded-xl mt-2 text-base" placeholder="name@company.com" required>
+            </div>
+            <div>
+                <label class="text-label">Password</label>
+                <input type="password" id="password" class="input-field w-full p-4 rounded-xl mt-2 text-base" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="btn-primary w-full py-4 rounded-xl font-semibold text-base mt-2">Access Portal</button>
+            <p id="msg" class="text-center text-xs text-red-500 min-h-[20px] pt-2"></p>
+        </form>
+        
+        <div class="mt-8 text-center">
+            <p class="text-xs text-gray-400">Secure 256-bit Encryption.</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { login, register, getCurrentProfile } from './js/auth.js';
+
+        const form = document.getElementById('authForm');
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const pass = document.getElementById('password').value;
+            const btn = form.querySelector('button');
+            const msg = document.getElementById('msg');
+            
+            btn.innerText = 'Verifying...';
+            btn.disabled = true;
+
+            try {
+                // Try Login
+                const data = await login(email, pass);
+                const profile = await getCurrentProfile(data.user.id);
+                
+                if (!profile || !profile.organization_id) {
+                    window.location.href = 'setup.html'; // New Company Setup
+                } else {
+                    window.location.href = 'dashboard.html'; // Go to OS
+                }
+
+            } catch (err) {
+                // Smart Logic: If login fails, offer registration (for both CEOs and Invited Staff)
+                if(err.message.includes('Invalid login')) {
+                    const fullName = prompt("Account not found. Create new account?");
+                    if(fullName) {
+                        try {
+                            await register(email, pass, fullName);
+                            alert("Account created. Please sign in.");
+                            window.location.reload();
+                        } catch(regErr) { msg.innerText = regErr.message; }
+                    } else {
+                        msg.innerText = "Authentication failed.";
+                    }
+                } else {
+                    msg.innerText = err.message;
+                }
+                btn.innerText = 'Access Portal';
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

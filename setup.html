@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Pilot my Stock | Setup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body class="flex items-center justify-center h-screen bg-[#F5F5F7]">
+
+    <div class="glass w-full max-w-lg p-10 rounded-3xl fade-in shadow-2xl">
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold tracking-tight">Setup Organization.</h1>
+            <p class="text-gray-500">Configure your workspace hierarchy.</p>
+        </div>
+
+        <div id="step1" class="space-y-6">
+            <div>
+                <label class="text-label">Organization Name</label>
+                <input type="text" id="orgName" placeholder="e.g. Baobab Camps Ltd" class="input-field w-full p-4 rounded-xl mt-2 text-lg font-semibold">
+            </div>
+            <button onclick="handleStep1()" class="btn-primary w-full py-4 rounded-xl font-medium">Continue</button>
+        </div>
+
+        <div id="step2" class="space-y-6 hidden">
+            <div>
+                <label class="text-label">Headquarters / Main Store</label>
+                <input type="text" id="hqName" placeholder="e.g. Arusha Main Store" class="input-field w-full p-4 rounded-xl mt-2">
+            </div>
+            <div class="pt-4">
+                <label class="text-label mb-2 block">Initial Camp Locations</label>
+                <div class="grid grid-cols-2 gap-4">
+                    <input type="text" id="camp1" placeholder="Camp 1" class="input-field w-full p-3 rounded-xl text-sm">
+                    <input type="text" id="camp2" placeholder="Camp 2" class="input-field w-full p-3 rounded-xl text-sm">
+                </div>
+            </div>
+            <button onclick="handleStep2()" class="btn-primary w-full py-4 rounded-xl font-medium">Launch Pilot</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { getSession } from './js/auth.js';
+        import { createOrganization, createLocation } from './js/services.js';
+        import { supabase } from './js/supabase.js';
+
+        let userId = null;
+        let orgId = null;
+
+        window.onload = async () => {
+            const session = await getSession();
+            userId = session.user.id;
+        };
+
+        window.handleStep1 = async () => {
+            const name = document.getElementById('orgName').value;
+            if(!name) return;
+            try {
+                const org = await createOrganization(name, userId);
+                orgId = org.id;
+                document.getElementById('step1').classList.add('hidden');
+                document.getElementById('step2').classList.remove('hidden');
+            } catch(e) { alert(e.message); }
+        };
+
+        window.handleStep2 = async () => {
+            const hq = document.getElementById('hqName').value;
+            const c1 = document.getElementById('camp1').value;
+            const c2 = document.getElementById('camp2').value;
+            if(!hq) return;
+            try {
+                const mainLoc = await createLocation(orgId, hq, 'main_store');
+                // Link admin to HQ
+                await supabase.from('profiles').update({ assigned_location_id: mainLoc.id }).eq('id', userId);
+                if(c1) await createLocation(orgId, c1, 'camp_store', mainLoc.id);
+                if(c2) await createLocation(orgId, c2, 'camp_store', mainLoc.id);
+                window.location.href = 'dashboard.html';
+            } catch(e) { alert(e.message); }
+        };
+    </script>
+</body>
+</html>
