@@ -6,33 +6,59 @@ let profile = null;
 let cart = [];
 
 window.onload = async () => {
+    // 1. Loading Screen
     const app = document.getElementById('app-view');
-    if(app) app.innerHTML = '<div class="flex h-screen items-center justify-center flex-col"><div class="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin mb-4"></div><p class="text-xs font-bold text-gray-400">VERIFYING ACCOUNT...</p></div>';
+    if(app) app.innerHTML = '<div class="flex h-screen items-center justify-center flex-col"><div class="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin mb-4"></div><p class="text-xs font-bold text-gray-500">AUTHENTICATING...</p></div>';
 
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
 
+    const userEmail = session.user.email.toLowerCase().trim();
+    const userId = session.user.id;
+
     try {
-        // --- HATUA YA KWANZA: LALIMISHA DATABASE IANGALIE INVITE ---
-        // Hii inazuia Setup Loop kabisa
-        const { data: status } = await supabase.rpc('claim_invite', { 
-            user_email: session.user.email, 
-            user_id: session.user.id 
-        });
+        // 2. CHECK FOR INVITE FIRST (Hapa ndipo ushindi ulipo)
+        const { data: invite } = await supabase
+            .from('staff_invites')
+            .select('*')
+            .ilike('email', userEmail)
+            .maybeSingle();
 
-        // --- HATUA YA PILI: VUTA PROFILE ILIYOKAMILIKA ---
-        profile = await getCurrentProfile(session.user.id);
+        if (invite) {
+            console.log("INVITE FOUND! Force-linking user to organization...");
+            
+            // Tengeneza Profile kwa nguvu kutumia data za Invite
+            const { data: linkedProfile, error: linkError } = await supabase
+                .from('profiles')
+                .upsert({
+                    id: userId,
+                    email: userEmail,
+                    full_name: 'Staff Member',
+                    organization_id: invite.organization_id,
+                    role: invite.role,
+                    assigned_location_id: invite.assigned_location_id
+                })
+                .select()
+                .single();
 
-        // --- HATUA YA TATU: MAAMUZI YA NJIA (ROUTING) ---
-        if (status === 'STAFF_LINKED' || (profile && profile.organization_id)) {
-            console.log("Verified. Redirecting to Dashboard.");
+            if (linkError) throw linkError;
+            
+            // Mark invite as accepted
+            await supabase.from('staff_invites').update({ status: 'accepted' }).eq('id', invite.id);
+            profile = linkedProfile;
+
         } else {
-            // Hapa ndipo Manager mpya kweli anapopelekwa Setup
-            window.location.href = 'setup.html';
-            return;
+            // 3. KAMA HANA INVITE, ANGALIA KAMA NI MANAGER
+            profile = await getCurrentProfile(userId);
+            
+            if (!profile || !profile.organization_id) {
+                console.log("No Invite & No Organization. Sending to Setup.");
+                window.location.href = 'setup.html';
+                return;
+            }
         }
 
-        // --- HATUA YA NNE: LOAD DASHBOARD DATA ---
+        // 4. DASHBOARD UI LOADING
         document.getElementById('userName').innerText = profile.full_name || 'User';
         document.getElementById('userRole').innerText = (profile.role || 'staff').replace('_', ' ');
         document.getElementById('avatar').innerText = (profile.full_name || 'U').charAt(0);
@@ -43,8 +69,10 @@ window.onload = async () => {
         if(document.getElementById('close-sidebar')) document.getElementById('close-sidebar').addEventListener('click', () => sb.classList.add('-translate-x-full'));
 
         router('inventory');
+
     } catch (e) {
-        console.error("Critical Failure:", e);
+        console.error("System Audit Error:", e);
+        alert("Critical Failure connecting to system.");
         logout();
     }
 };
@@ -52,8 +80,8 @@ window.onload = async () => {
 window.router = async (view) => {
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-8 h-8 border-2 border-black border-b-transparent rounded-full animate-spin"></div></div>';
-    
-    document.getElementById('sidebar').classList.add('-translate-x-full');
+    if(document.getElementById('sidebar')) document.getElementById('sidebar').classList.add('-translate-x-full');
+
     document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('bg-gray-50', 'text-black'));
     document.getElementById(`nav-${view}`)?.classList.add('bg-gray-50', 'text-black');
 
@@ -64,42 +92,46 @@ window.router = async (view) => {
     else if (view === 'approvals') await renderApprovals(app);
 };
 
-// --- INVITE MODAL WITH HARD VALIDATION ---
+// --- INVITE MODAL WITH VALIDATION (FIXED) ---
 window.inviteModal = () => {
     document.getElementById('modal-content').innerHTML = `
-    <h3 class="font-bold mb-2">Invite Staff</h3>
-    <form onsubmit="event.preventDefault(); window.sendStaffInvite()">
-        <input id="iE" class="input-field w-full mb-2" placeholder="Email Address" type="email" required>
-        <select id="iR" class="input-field w-full mb-2 bg-white">
+    <h3 class="font-bold mb-2 text-lg">Invite Staff</h3>
+    <form onsubmit="event.preventDefault(); window.processInvite()">
+        <label class="text-[10px] font-bold text-gray-400 uppercase">Email Address</label>
+        <input id="iE" class="input-field w-full mb-3" placeholder="email@example.com" type="email" required>
+        <label class="text-[10px] font-bold text-gray-400 uppercase">System Role</label>
+        <select id="iR" class="input-field w-full mb-4 bg-white">
             <option value="storekeeper">Storekeeper</option>
             <option value="barman">Barman</option>
             <option value="finance">Finance</option>
         </select>
-        <button id="btnInv" class="btn-black w-full py-2 rounded">Send Invitation</button>
+        <button id="btnInv" class="btn-black w-full py-3 rounded-xl font-bold">Send Invitation</button>
     </form>`;
     document.getElementById('modal').classList.remove('hidden');
 }
 
-window.sendStaffInvite = async () => {
+window.processInvite = async () => {
     const email = document.getElementById('iE').value.trim();
     const role = document.getElementById('iR').value;
     const session = await getSession();
 
-    if (!email) return alert("Email is required.");
+    if (!email) return alert("Please enter an email.");
     if (email.toLowerCase() === session.user.email.toLowerCase()) return alert("Huwezi kujialika mwenyewe!");
 
-    document.getElementById('btnInv').innerText = "Sending...";
+    const btn = document.getElementById('btnInv');
+    btn.innerText = "Sending..."; btn.disabled = true;
+
     try {
         await inviteStaff(email, role, profile.organization_id);
-        alert("Success: Invitation sent!");
+        alert("Success: " + email + " has been invited.");
         document.getElementById('modal').classList.add('hidden');
     } catch (e) {
         alert(e.message);
-        document.getElementById('btnInv').innerText = "Send Invitation";
+        btn.innerText = "Send Invitation"; btn.disabled = false;
     }
 }
 
-// ... (Functions za renderInventory, renderBar nk. zote zinabaki vilevile)
+// (Inventory, Settings, Bar, Staff, nk. zote zinabaki vilevile)
 async function renderInventory(c){try{const d=await getInventory(profile.organization_id); const l=await getLocations(profile.organization_id); const r=d.map(i=>`<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${i.products?.name}</td><td class="p-4 text-xs text-gray-500">${i.locations?.name}</td><td class="p-4 font-mono font-bold">${Number(i.quantity).toFixed(1)} ${i.products?.unit}</td><td class="p-4 text-right">${profile.role==='manager'?`<button onclick="window.openTransfer('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] bg-black text-white px-2 py-1 rounded font-bold">Transfer</button>`:''}</td></tr>`).join(''); c.innerHTML=`<div id="transferModal" class="fixed inset-0 bg-black/50 hidden z-[60] flex items-center justify-center p-4"><div class="bg-white p-6 rounded-xl w-full max-w-sm"><h3 class="font-bold text-lg mb-4">Transfer Stock</h3><input id="tProdName" disabled class="input-field w-full mb-2 bg-gray-100"><input type="hidden" id="tProdId"><input type="hidden" id="tFromLoc"><label class="text-xs font-bold text-gray-500">To Location:</label><select id="tToLoc" class="input-field w-full mb-2 bg-white border p-2 rounded">${l.map(x=>`<option value="${x.id}">${x.name}</option>`).join('')}</select><label class="text-xs font-bold text-gray-500">Quantity:</label><input id="tQty" type="number" class="input-field w-full mb-4 border p-2 rounded"><button onclick="window.submitTransfer()" class="btn-black w-full py-3 rounded-xl font-bold">Transfer</button><button onclick="document.getElementById('transferModal').classList.add('hidden')" class="w-full mt-2 text-xs text-gray-500 py-2">Cancel</button></div></div><h1 class="text-2xl font-bold mb-6">Inventory Control</h1><div class="glass rounded-xl overflow-hidden"><table class="w-full text-left"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="p-4">Item</th><th class="p-4">Loc</th><th class="p-4">Qty</th><th class="p-4 text-right">Action</th></tr></thead><tbody>${r.length?r:'<tr><td colspan="4" class="p-6 text-center text-gray-400">No stock found.</td></tr>'}</tbody></table></div>`; }catch(e){c.innerHTML='Error loading inventory';}}
 async function renderSettings(c){try{const l=await getLocations(profile.organization_id); const r=l.map(x=>`<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${x.name}</td><td class="p-4"><span class="bg-gray-100 text-[10px] font-bold px-2 py-1 rounded uppercase">${x.type.replace('_',' ')}</span></td><td class="p-4 text-right"><button onclick="window.editLoc('${x.id}','${x.name}','${x.type}')" class="text-xs font-bold text-gray-400 hover:text-black">Edit</button></td></tr>`).join(''); c.innerHTML=`<div class="flex justify-between items-end mb-6"><h1 class="text-2xl font-bold">Settings</h1><button onclick="window.addLoc()" class="btn-black px-4 py-2 text-xs font-bold rounded-lg">+ Location</button></div><div class="glass rounded-xl overflow-hidden"><table class="w-full text-left"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="p-4">Name</th><th class="p-4">Type</th><th class="p-4 text-right">Action</th></tr></thead><tbody>${r}</tbody></table></div>`;}catch(e){c.innerHTML='Error settings';}}
 async function renderBar(c){try{const s=await getInventory(profile.organization_id); const i=s.filter(x=>x.quantity>0).map(x=>`<div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border p-4 rounded-xl cursor-pointer hover:shadow-md active:scale-95 transition"><div class="h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center mb-3 text-xl">🍺</div><h4 class="font-bold text-sm truncate">${x.products.name}</h4><div class="flex justify-between mt-2"><span class="text-xs font-bold">$${x.products.selling_price}</span><span class="text-[10px] text-gray-500">Qty: ${x.quantity}</span></div></div>`).join(''); c.innerHTML=`<div class="flex flex-col md:flex-row h-full gap-4"><div class="flex-1 overflow-y-auto"><h1 class="text-2xl font-bold mb-4">Bar POS</h1><div class="grid grid-cols-2 md:grid-cols-3 gap-3">${i.length?i:'<p class="col-span-3 text-gray-400">No stock.</p>'}</div></div><div class="w-full md:w-80 bg-white border md:border-l border-gray-200 p-4 flex flex-col rounded-xl"><h3 class="font-bold border-b pb-2 mb-2">Current Order</h3><div id="cart-list" class="flex-1 overflow-y-auto space-y-2 mb-2"><p class="text-center text-xs text-gray-400 mt-10">Empty</p></div><div class="pt-2 border-t"><div class="flex justify-between font-bold mb-4"><span>Total</span><span id="cart-total">$0.00</span></div><button onclick="window.checkout()" class="btn-black w-full py-3 rounded-xl font-bold text-sm">Charge</button></div></div></div>`; window.renderCart();}catch(e){c.innerHTML='Error Bar';}}
