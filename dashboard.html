@@ -15,19 +15,13 @@
         .input-field { border: 1px solid #E5E7EB; padding: 12px; border-radius: 12px; outline: none; transition: 0.2s; background: #fff; width: 100%; font-size: 14px; font-weight: 500; }
         .input-field:focus { border-color: #000; box-shadow: 0 0 0 2px rgba(0,0,0,0.05); }
         
-        /* DROP-DOWN CLIPPING & STACKING REPAIR */
+        /* DROPDOWN & MODAL STACKING FIX */
         #modal { display: none; }
         #modal-content { position: relative; z-index: 1000; overflow: visible !important; border: none; }
         .modal-body { overflow: visible !important; display: flex; flex-direction: column; gap: 1.25rem; }
         
-        /* Layering for select menus */
-        .layer-top { z-index: 50; position: relative; }
-        .layer-mid { z-index: 40; position: relative; }
-        .layer-base { z-index: 30; position: relative; }
-        
-        .btn-black { background: #000; color: #fff; transition: 0.2s; cursor: pointer; border-radius: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.025em; } 
+        .btn-black { background: #000; color: #fff; transition: 0.2s; cursor: pointer; border-radius: 12px; font-weight: 600; text-transform: uppercase; } 
         .btn-black:hover { opacity: 0.8; transform: translateY(-1px); }
-        .btn-black:disabled { background: #9CA3AF; cursor: not-allowed; }
         
         select.input-field { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239CA3AF'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px; }
     </style>
@@ -53,7 +47,7 @@
             </button>
             <button onclick="window.router('approvals')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-approvals">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span class="font-medium text-sm">Approvals Center</span>
+                <span class="font-medium text-sm">Authorization Queue</span>
             </button>
             <button onclick="window.router('staff')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-staff">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -70,10 +64,10 @@
                 <div class="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center font-bold text-xs" id="avatar"></div>
                 <div class="overflow-hidden">
                     <p class="font-bold text-xs text-gray-900 truncate" id="userName">...</p>
-                    <p class="text-[10px] text-gray-400 truncate uppercase tracking-widest" id="userRole">...</p>
+                    <p class="text-[10px] text-gray-500 truncate uppercase tracking-widest" id="userRole">...</p>
                 </div>
             </div>
-            <button onclick="window.logoutAction()" class="mt-2 w-full text-xs font-bold text-gray-400 hover:text-red-600 py-2 flex items-center justify-center gap-1 uppercase tracking-tighter">
+            <button onclick="window.logoutAction()" class="mt-2 w-full text-xs font-bold text-gray-400 hover:text-red-600 py-2 flex items-center justify-center gap-1 uppercase">
                 Sign Out Account
             </button>
         </div>
