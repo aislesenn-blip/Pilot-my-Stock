@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pilot my Stock | Setup</title>
+    <title>Setup | Pilot my Stock</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -13,12 +13,95 @@
         .input-field:focus { border-color: #000; outline: none; ring: 1px solid #000; }
         .btn-black { background: #111; color: #fff; transition: all 0.2s; }
         .btn-black:hover { background: #000; transform: translateY(-1px); }
-        .step-active { border-color: #000; color: #000; }
-        .step-inactive { border-color: #E5E5E5; color: #9CA3AF; }
     </style>
 </head>
 <body class="flex items-center justify-center h-screen px-4">
 
+    <div class="glass w-full max-w-lg p-10 rounded-3xl animate-fade-in">
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold tracking-tight text-gray-900">Organization Setup.</h1>
+            <p class="text-xs text-gray-500 mt-2 font-medium tracking-wide">CONFIGURE YOUR WORKSPACE</p>
+        </div>
+
+        <div class="flex gap-2 mb-8">
+            <div id="progress1" class="h-1 flex-1 bg-black rounded-full transition-all"></div>
+            <div id="progress2" class="h-1 flex-1 bg-gray-200 rounded-full transition-all"></div>
+        </div>
+
+        <div id="step1" class="space-y-6">
+            <div>
+                <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Organization Name</label>
+                <input type="text" id="orgName" placeholder="e.g. Baobab Camps Ltd" class="input-field w-full p-4 rounded-xl mt-2 text-lg font-medium text-gray-900" required>
+            </div>
+            <button onclick="handleStep1()" class="btn-black w-full py-4 rounded-xl font-bold text-sm">Continue</button>
+        </div>
+
+        <div id="step2" class="space-y-6 hidden">
+            <div>
+                <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Headquarters / Main Store</label>
+                <input type="text" id="hqName" placeholder="e.g. Arusha Main Store" class="input-field w-full p-4 rounded-xl mt-2 text-gray-900 font-medium">
+            </div>
+            <div class="pt-2">
+                <label class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 block">Initial Camp Locations</label>
+                <div class="grid grid-cols-2 gap-4">
+                    <input type="text" id="camp1" placeholder="Camp 1 Name" class="input-field w-full p-3.5 rounded-xl text-sm">
+                    <input type="text" id="camp2" placeholder="Camp 2 Name" class="input-field w-full p-3.5 rounded-xl text-sm">
+                </div>
+            </div>
+            <button onclick="handleStep2()" class="btn-black w-full py-4 rounded-xl font-bold text-sm">Start My Stock Pilot</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { getSession } from './js/auth.js';
+        import { createOrganization, createLocation } from './js/services.js';
+        import { supabase } from './js/supabase.js';
+
+        let userId = null;
+        let orgId = null;
+
+        window.onload = async () => {
+            const session = await getSession();
+            if(!session) { window.location.href = 'index.html'; return; }
+            userId = session.user.id;
+        };
+
+        window.handleStep1 = async () => {
+            const name = document.getElementById('orgName').value;
+            const btn = document.querySelector('#step1 button');
+            if(!name) return alert("Enter organization name");
+            
+            btn.innerText = "Processing..."; btn.disabled = true;
+            try {
+                const org = await createOrganization(name, userId);
+                orgId = org.id;
+                document.getElementById('step1').classList.add('hidden');
+                document.getElementById('step2').classList.remove('hidden');
+                document.getElementById('progress2').classList.remove('bg-gray-200');
+                document.getElementById('progress2').classList.add('bg-black');
+            } catch(e) { alert(e.message); btn.disabled = false; }
+        };
+
+        window.handleStep2 = async () => {
+            const hq = document.getElementById('hqName').value;
+            const c1 = document.getElementById('camp1').value;
+            const c2 = document.getElementById('camp2').value;
+            const btn = document.querySelector('#step2 button');
+
+            if(!hq) return alert("Enter HQ Name");
+            btn.innerText = "Initializing..."; btn.disabled = true;
+
+            try {
+                const mainLoc = await createLocation(orgId, hq, 'main_store');
+                await supabase.from('profiles').update({ organization_id: orgId, assigned_location_id: mainLoc.id, role: 'manager' }).eq('id', userId);
+                if(c1) await createLocation(orgId, c1, 'camp_store', mainLoc.id);
+                if(c2) await createLocation(orgId, c2, 'camp_store', mainLoc.id);
+                window.location.href = 'dashboard.html';
+            } catch(e) { alert(e.message); btn.disabled = false; }
+        };
+    </script>
+</body>
+</html>
     <div class="glass w-full max-w-lg p-10 rounded-3xl animate-fade-in">
         
         <div class="mb-8">
@@ -129,3 +212,4 @@
     </script>
 </body>
 </html>
+
