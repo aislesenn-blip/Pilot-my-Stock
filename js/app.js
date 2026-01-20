@@ -6,199 +6,373 @@ let profile = null;
 let cart = [];
 
 window.onload = async () => {
-    // 1. Loading UI
+    // 1. Initial State (Loading)
     const app = document.getElementById('app-view');
-    if(app) app.innerHTML = '<div class="flex h-screen items-center justify-center flex-col"><div class="w-10 h-10 border-4 border-black border-t-transparent rounded-full animate-spin mb-4"></div><p class="text-xs font-bold text-gray-400 uppercase tracking-widest">LOADING SECURE PORTAL...</p></div>';
+    if(app) app.innerHTML = `
+        <div class="flex h-full items-center justify-center">
+            <div class="flex flex-col items-center gap-2">
+                <div class="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-[10px] font-bold tracking-widest text-gray-400 uppercase">Syncing System...</span>
+            </div>
+        </div>`;
 
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
 
     try {
-        // 2. MASTER HANDSHAKE (Inahakikisha Invited User anaunganishwa)
+        // 2. ATOMIC LINK (Unahakikisha Invited Users wameunganishwa kabla ya kuingia)
         await supabase.rpc('claim_my_invite', { 
             email_to_check: session.user.email, 
             user_id_to_link: session.user.id 
         });
 
-        // 3. Vuta Profile ya uhakika
-        const { data: freshProfile, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        profile = freshProfile;
+        // 3. FETCH FULL PROFILE
+        const { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        profile = prof;
 
-        // 4. CHECK KAMA ANA KAMPUNI
         if (!profile || !profile.organization_id) {
             window.location.href = 'setup.html';
             return;
         }
 
-        // 5. JAZA TAARIFA ZA DASHBOARD
+        // 4. POPULATE SIDEBAR INFO
         document.getElementById('userName').innerText = profile.full_name || 'User';
-        document.getElementById('userRole').innerText = (profile.role || 'staff').replace('_', ' ');
+        document.getElementById('userRole').innerText = profile.role.replace('_', ' ');
         document.getElementById('avatar').innerText = (profile.full_name || 'U').charAt(0);
         window.logoutAction = logout;
 
-        // 6. ROLE-BASED LANDING (HAPA NDIYO FIX YAKO)
-        // Inampeleka kila mtu kwenye interface yake husika akishaingia tu
-        if (profile.role === 'barman') {
-            router('bar'); 
-        } else if (profile.role === 'finance') {
-            router('approvals'); // Finance wanaanza na Approvals/Reports
-        } else {
-            router('inventory'); // Manager na Storekeeper
-        }
+        // 5. ROLE-BASED ACCESS CONTROL (Hapa ndipo tunapoficha Menu)
+        applyRolePermissions(profile.role);
 
-        // Mobile Menu Setup
-        const sb = document.getElementById('sidebar');
-        if(document.getElementById('mobile-menu-btn')) document.getElementById('mobile-menu-btn').addEventListener('click', () => sb.classList.remove('-translate-x-full'));
-        if(document.getElementById('close-sidebar')) document.getElementById('close-sidebar').addEventListener('click', () => sb.classList.add('-translate-x-full'));
+        // Sidebar Toggles for Mobile
+        document.getElementById('mobile-menu-btn')?.addEventListener('click', () => {
+            document.getElementById('sidebar').classList.remove('-translate-x-full');
+        });
+        document.getElementById('close-sidebar')?.addEventListener('click', () => {
+            document.getElementById('sidebar').classList.add('-translate-x-full');
+        });
+
+        // 6. INITIAL ROUTING (Nchi gani ufungue kwanza?)
+        if (profile.role === 'finance') router('approvals');
+        else if (profile.role === 'barman') router('bar');
+        else router('inventory');
 
     } catch (e) {
-        console.error("System Error:", e);
+        console.error("Dashboard Load Error:", e);
         logout();
     }
 };
 
+// --- SECURITY & PERMISSIONS ENGINE ---
+function applyRolePermissions(role) {
+    const menus = {
+        inventory: document.getElementById('nav-inventory'),
+        bar: document.getElementById('nav-bar'),
+        approvals: document.getElementById('nav-approvals'),
+        staff: document.getElementById('nav-staff'),
+        settings: document.getElementById('nav-settings')
+    };
+
+    // Manager: Anaona Kila Kitu
+    if (role === 'manager') return; 
+
+    // Finance Specialist
+    if (role === 'finance') {
+        menus.bar.classList.add('hidden');
+        menus.staff.classList.add('hidden');
+        menus.settings.classList.add('hidden');
+    } 
+    // Barman
+    else if (role === 'barman') {
+        menus.approvals.classList.add('hidden');
+        menus.staff.classList.add('hidden');
+        menus.settings.classList.add('hidden');
+    }
+    // Storekeeper
+    else if (role === 'storekeeper') {
+        menus.bar.classList.add('hidden');
+        menus.approvals.classList.add('hidden');
+        menus.staff.classList.add('hidden');
+        menus.settings.classList.add('hidden');
+    }
+}
+
 window.router = async (view) => {
-    // ULINZI WA ROLE (Role Protection)
-    // Zuia Barman au Finance wasiingie kwenye Settings au Team Management
-    if ((view === 'settings' || view === 'staff') && profile.role !== 'manager') {
-        alert("Access Denied: Managers Only.");
+    // Force Security Check before Routing
+    if ((view === 'staff' || view === 'settings') && profile.role !== 'manager') {
+        alert("Restricted Access: Management Only.");
         return;
     }
 
     const app = document.getElementById('app-view');
-    app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-8 h-8 border-2 border-black border-b-transparent rounded-full animate-spin"></div></div>';
+    app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin"></div></div>';
     
-    // Funga sidebar kwenye mobile baada ya kuchagua
-    if(document.getElementById('sidebar')) document.getElementById('sidebar').classList.add('-translate-x-full');
+    // Update Sidebar Active UI
+    document.querySelectorAll('.nav-item').forEach(el => {
+        el.classList.remove('bg-gray-100', 'text-black');
+        el.classList.add('text-gray-500');
+    });
+    const activeNav = document.getElementById(`nav-${view}`);
+    if(activeNav) {
+        activeNav.classList.add('bg-gray-100', 'text-black');
+        activeNav.classList.remove('text-gray-500');
+    }
 
-    // Update Active UI Tab
-    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('bg-gray-100', 'text-black', 'font-bold'));
-    document.getElementById(`nav-${view}`)?.classList.add('bg-gray-100', 'text-black', 'font-bold');
+    if(window.innerWidth < 768) document.getElementById('sidebar').classList.add('-translate-x-full');
 
-    // Render Husika
+    // Load Views
     if (view === 'inventory') await renderInventory(app);
-    else if (view === 'settings') await renderSettings(app);
     else if (view === 'bar') await renderBar(app);
-    else if (view === 'staff') await renderStaff(app);
     else if (view === 'approvals') await renderApprovals(app);
+    else if (view === 'staff') await renderStaff(app);
+    else if (view === 'settings') await renderSettings(app);
 };
 
-// --- RENDER FUNCTIONS ---
+// --- RENDER MODULES (Using SVG Icons as requested) ---
 
-async function renderInventory(c){
+async function renderInventory(c) {
     try {
-        const d = await getInventory(profile.organization_id); 
-        const l = await getLocations(profile.organization_id); 
-        const r = d.map(i => `
-            <tr class="border-b border-gray-50">
-                <td class="p-4 font-bold text-sm text-gray-900">${i.products?.name}</td>
-                <td class="p-4 text-xs text-gray-500">${i.locations?.name}</td>
-                <td class="p-4 font-mono font-bold text-gray-900">${Number(i.quantity).toFixed(1)} ${i.products?.unit}</td>
-                <td class="p-4 text-right">
-                    ${profile.role === 'manager' ? `<button onclick="window.openTransfer('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] bg-black text-white px-3 py-1.5 rounded-lg font-bold">Transfer</button>` : '<span class="text-gray-300 text-[10px]">Read Only</span>'}
+        const data = await getInventory(profile.organization_id);
+        const locations = await getLocations(profile.organization_id);
+        
+        const rows = data.map(i => `
+            <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
+                <td class="py-4 px-2">
+                    <p class="font-bold text-sm text-gray-900">${i.products?.name}</p>
+                    <p class="text-[10px] text-gray-400 font-medium uppercase tracking-tighter">${i.products?.category || 'Standard'}</p>
+                </td>
+                <td class="py-4 px-2 text-xs font-semibold text-gray-500 uppercase">${i.locations?.name}</td>
+                <td class="py-4 px-2 font-mono font-bold text-gray-900">${i.quantity} ${i.products?.unit}</td>
+                <td class="py-4 px-2 text-right">
+                    ${(profile.role === 'manager' || profile.role === 'storekeeper') ? `
+                        <button onclick="window.openTransfer('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold bg-black text-white px-3 py-2 rounded-lg hover:opacity-80">Issue Item</button>
+                    ` : '<span class="text-[10px] text-gray-300 font-bold uppercase">Locked</span>'}
                 </td>
             </tr>`).join('');
-        
+
         c.innerHTML = `
-            <h1 class="text-2xl font-bold mb-6 text-gray-900">Live Inventory</h1>
-            <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
-                <table class="w-full text-left">
-                    <thead class="bg-gray-50 text-[10px] uppercase text-gray-400 tracking-widest font-bold">
-                        <tr><th class="p-4">Product</th><th class="p-4">Location</th><th class="p-4">Balance</th><th class="p-4 text-right">Action</th></tr>
-                    </thead>
-                    <tbody>${r.length ? r : '<tr><td colspan="4" class="p-10 text-center text-gray-400">No stock records found.</td></tr>'}</tbody>
-                </table>
-            </div>
-            <div id="transferModal" class="fixed inset-0 bg-black/50 hidden z-[100] flex items-center justify-center p-4">
-                <div class="bg-white p-6 rounded-2xl w-full max-w-sm">
-                    <h3 class="font-bold text-lg mb-4">Transfer Stock</h3>
-                    <input id="tProdName" disabled class="w-full p-3 bg-gray-50 border rounded-xl mb-3 text-sm">
-                    <input type="hidden" id="tProdId"><input type="hidden" id="tFromLoc">
-                    <label class="text-[10px] font-bold text-gray-400 uppercase">Destination</label>
-                    <select id="tToLoc" class="w-full p-3 border rounded-xl mb-4 bg-white">${l.map(x=>`<option value="${x.id}">${x.name}</option>`).join('')}</select>
-                    <label class="text-[10px] font-bold text-gray-400 uppercase">Quantity</label>
-                    <input id="tQty" type="number" class="w-full p-3 border rounded-xl mb-6" placeholder="0.00">
-                    <button onclick="window.submitTransfer()" class="w-full bg-black text-white py-4 rounded-xl font-bold">Confirm Transfer</button>
-                    <button onclick="document.getElementById('transferModal').classList.add('hidden')" class="w-full mt-2 text-sm text-gray-400 py-2">Cancel</button>
+            <div class="flex justify-between items-center mb-8">
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-gray-900 uppercase tracking-widest">Inventory Management</h1>
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Real-time Stock Synchronization</p>
                 </div>
-            </div>`;
-    } catch(e) { c.innerHTML = "Failed to load inventory."; }
-}
-
-async function renderApprovals(c){
-    try {
-        const q = await getPendingApprovals(profile.organization_id); 
-        const r = q.map(x => `
-            <tr class="border-b border-gray-50">
-                <td class="p-4 font-bold text-sm">${x.products?.name}</td>
-                <td class="p-4 text-xs font-mono text-blue-600">${x.quantity}</td>
-                <td class="p-4 text-xs text-gray-500">${x.profiles?.full_name}</td>
-                <td class="p-4 text-right space-x-2">
-                    <button onclick="window.approve('${x.id}','approved')" class="text-[10px] bg-green-500 text-white px-3 py-1.5 rounded font-bold">Approve</button>
-                    <button onclick="window.approve('${x.id}','rejected')" class="text-[10px] bg-red-50 text-red-600 px-3 py-1.5 rounded font-bold">Reject</button>
-                </td>
-            </tr>`).join('');
-        
-        c.innerHTML = `
-            <div class="flex justify-between items-center mb-6">
-                <h1 class="text-2xl font-bold text-gray-900">Finance & Approvals</h1>
-                <div class="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-tighter">Finance Access</div>
             </div>
-            <div class="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+            <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
                 <table class="w-full text-left">
-                    <thead class="bg-gray-50 text-[10px] uppercase text-gray-400 font-bold">
-                        <tr><th class="p-4">Item Requested</th><th class="p-4">Qty</th><th class="p-4">Staff</th><th class="p-4 text-right">Action</th></tr>
+                    <thead class="bg-gray-50 text-[10px] uppercase tracking-widest text-gray-400 font-bold border-b border-gray-100">
+                        <tr><th class="p-4">SKU / Item</th><th class="p-4">Store Location</th><th class="p-4">Available Balance</th><th class="p-4 text-right">Action</th></tr>
                     </thead>
-                    <tbody>${r.length ? r : '<tr><td colspan="4" class="p-10 text-center text-gray-400">No pending approvals for today.</td></tr>'}</tbody>
+                    <tbody class="divide-y divide-gray-50">${rows.length ? rows : '<tr><td colspan="4" class="p-12 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No stock found in this organization.</td></tr>'}</tbody>
                 </table>
             </div>`;
-    } catch(e) { c.innerHTML = "Error loading approvals."; }
+    } catch(e) { console.error(e); }
 }
 
-async function renderBar(c){
+async function renderApprovals(c) {
     try {
-        const s = await getInventory(profile.organization_id); 
-        const i = s.filter(x => x.quantity > 0).map(x => `
-            <div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border border-gray-100 p-5 rounded-2xl cursor-pointer hover:shadow-lg transition active:scale-95">
-                <div class="h-10 w-10 bg-gray-50 rounded-full flex items-center justify-center mb-3">🍺</div>
-                <h4 class="font-bold text-sm text-gray-900">${x.products.name}</h4>
-                <div class="flex justify-between items-center mt-3">
-                    <span class="text-xs font-bold text-gray-900">$${x.products.selling_price}</span>
-                    <span class="text-[10px] bg-gray-100 px-2 py-0.5 rounded text-gray-500">Stock: ${x.quantity}</span>
+        const requests = await getPendingApprovals(profile.organization_id);
+        const rows = requests.map(x => `
+            <tr class="border-b border-gray-50">
+                <td class="py-4 px-4 font-bold text-sm text-gray-900">${x.products?.name}</td>
+                <td class="py-4 px-4 text-xs font-mono font-bold text-blue-600">${x.quantity}</td>
+                <td class="py-4 px-4 text-xs font-medium text-gray-500 uppercase">${x.profiles?.full_name}</td>
+                <td class="py-4 px-4 text-right space-x-2">
+                    <button onclick="window.approve('${x.id}','approved')" class="bg-black text-white px-4 py-2 rounded-lg text-[10px] font-bold hover:opacity-80">Approve</button>
+                    <button onclick="window.approve('${x.id}','rejected')" class="bg-gray-100 text-gray-400 px-4 py-2 rounded-lg text-[10px] font-bold">Reject</button>
+                </td>
+            </tr>`).join('');
+
+        c.innerHTML = `
+            <h1 class="text-xl font-bold mb-8 uppercase tracking-widest text-gray-400">Finance Approval Queue</h1>
+            <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                <table class="w-full text-left">
+                    <thead class="bg-gray-50 text-[10px] uppercase text-gray-400 font-bold border-b border-gray-100">
+                        <tr><th class="p-4">Requested Item</th><th class="p-4">Qty</th><th class="p-4">Requestor</th><th class="p-4 text-right">Control Action</th></tr>
+                    </thead>
+                    <tbody>${rows.length ? rows : '<tr><td colspan="4" class="p-12 text-center text-xs text-gray-400 font-bold uppercase tracking-widest">No pending financial approvals.</td></tr>'}</tbody>
+                </table>
+            </div>`;
+    } catch(e) { console.error(e); }
+}
+
+async function renderBar(c) {
+    try {
+        const inventory = await getInventory(profile.organization_id);
+        const items = inventory.map(x => `
+            <div onclick="window.addToCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border border-gray-100 p-6 rounded-2xl cursor-pointer hover:border-black transition active:scale-95 shadow-sm">
+                <h4 class="font-bold text-sm text-gray-900 uppercase tracking-tight">${x.products.name}</h4>
+                <div class="flex justify-between items-center mt-4">
+                    <span class="text-xs font-bold text-gray-900 font-mono tracking-tighter">$${x.products.selling_price}</span>
+                    <span class="text-[9px] font-bold text-gray-300 uppercase tracking-widest">Stock: ${x.quantity}</span>
                 </div>
             </div>`).join('');
-        
+
         c.innerHTML = `
-            <div class="flex flex-col lg:flex-row h-full gap-6">
-                <div class="flex-1">
-                    <h1 class="text-2xl font-bold mb-6">Bar POS</h1>
-                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">${i.length ? i : '<p class="text-gray-400">Inventory is empty.</p>'}</div>
+            <div class="flex flex-col lg:flex-row h-full gap-8">
+                <div class="flex-1 overflow-y-auto">
+                    <h1 class="text-xl font-bold mb-8 uppercase tracking-widest text-gray-400">Sales Entry Portal</h1>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">${items}</div>
                 </div>
-                <div class="w-full lg:w-80 bg-white border border-gray-200 p-6 flex flex-col rounded-2xl shadow-sm">
-                    <h3 class="font-bold text-gray-900 border-b pb-4 mb-4">Current Bill</h3>
-                    <div id="cart-list" class="flex-1 overflow-y-auto space-y-3"></div>
-                    <div class="pt-4 border-t mt-4">
-                        <div class="flex justify-between font-bold text-lg mb-4"><span>Total</span><span id="cart-total">$0.00</span></div>
-                        <button onclick="window.checkout()" class="w-full bg-black text-white py-4 rounded-xl font-bold shadow-lg">Process Order</button>
+                <div class="w-full lg:w-96 bg-white border border-gray-200 p-6 rounded-3xl shadow-xl flex flex-col h-fit sticky top-0">
+                    <h3 class="font-bold text-lg text-gray-900 mb-6 uppercase tracking-tight">Active Ticket</h3>
+                    <div id="cart-list" class="flex-1 space-y-4 max-h-[300px] overflow-y-auto mb-6"></div>
+                    <div class="pt-6 border-t border-gray-100">
+                        <div class="flex justify-between font-bold text-xl mb-6 text-gray-900 tracking-tighter">
+                            <span>Grand Total</span>
+                            <span id="cart-total">$0.00</span>
+                        </div>
+                        <button onclick="window.processCheckout()" class="w-full bg-black text-white py-4 rounded-2xl font-bold text-sm hover:opacity-90 shadow-lg shadow-black/5 transition uppercase tracking-widest">Authorize Sale</button>
                     </div>
                 </div>
             </div>`;
-        window.renderCart();
-    } catch(e) { c.innerHTML = "Error loading Bar POS."; }
+        window.updateCartUI();
+    } catch(e) { console.error(e); }
 }
 
-// --- CORE UTILS (HIZI HAZIJABADILIKA) ---
-window.addCart=(n,p,i)=>{const x=cart.find(c=>c.id===i); if(x)x.qty++; else cart.push({name:n,price:p,id:i,qty:1}); window.renderCart();}
-window.renderCart=()=>{const l=document.getElementById('cart-list'),t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<p class="text-center text-xs text-gray-400 mt-10">Bill is empty</p>';t.innerText='$0.00';return;} let tot=0; l.innerHTML=cart.map(i=>{tot+=i.price*i.qty; return `<div class="flex justify-between items-center bg-gray-50 p-3 rounded-xl"><div class="truncate w-32"><div class="text-xs font-bold text-gray-900">${i.name}</div><div class="text-[10px] text-gray-500">${i.qty} x $${i.price}</div></div><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold text-xs">Remove</button></div>`;}).join(''); t.innerText='$'+tot.toFixed(2);}
-window.remCart=(i)=>{cart=cart.filter(c=>c.id!==i); window.renderCart();}
-window.checkout=async()=>{if(!cart.length)return alert('No items selected.'); if(!confirm('Finalize this sale?'))return; try{await processBarSale(profile.organization_id, profile.assigned_location_id||1, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); alert('Sale Completed!'); cart=[]; window.renderCart(); router('bar');}catch(e){alert(e.message);}}
-window.openTransfer=(n,i,f)=>{document.getElementById('tProdName').value=n;document.getElementById('tProdId').value=i;document.getElementById('tFromLoc').value=f;document.getElementById('transferModal').classList.remove('hidden');}
-window.submitTransfer=async()=>{try{await transferStock(document.getElementById('tProdId').value, document.getElementById('tFromLoc').value, document.getElementById('tToLoc').value, document.getElementById('tQty').value, profile.id, profile.organization_id); alert('Transfer Success'); document.getElementById('transferModal').classList.add('hidden'); router('inventory');}catch(e){alert(e.message);}}
+// --- SYSTEM CORE LOGIC (Utilities) ---
 
-// Settings & Staff (Only for Managers)
-async function renderSettings(c){try{const l=await getLocations(profile.organization_id); const r=l.map(x=>`<tr class="border-b"><td class="p-4 font-bold">${x.name}</td><td class="p-4 text-xs uppercase">${x.type}</td></tr>`).join(''); c.innerHTML=`<div class="flex justify-between mb-6"><h1 class="text-2xl font-bold">Settings</h1><button onclick="window.addLoc()" class="bg-black text-white px-4 py-2 rounded-xl text-xs font-bold">+ New Location</button></div><div class="bg-white rounded-2xl border border-gray-100 overflow-hidden"><table class="w-full text-left"><tbody>${r}</tbody></table></div>`;}catch(e){}}
-async function renderStaff(c){try{const s = await getStaff(profile.organization_id); const r=s.map(x=>`<tr class="border-b"><td class="p-4 font-bold text-sm">${x.full_name}</td><td class="p-4 text-xs text-gray-500">${x.email}</td><td class="p-4 uppercase text-[10px] font-bold">${x.role}</td></tr>`).join(''); c.innerHTML=`<div class="flex justify-between mb-6"><h1 class="text-2xl font-bold">Team</h1><button onclick="window.inviteModal()" class="bg-black text-white px-4 py-2 rounded-xl text-xs font-bold">+ Invite Staff</button></div><div class="bg-white rounded-2xl border border-gray-100 overflow-hidden"><table class="w-full text-left"><tbody>${r}</tbody></table></div>`;}catch(e){}}
+window.addToCart = (name, price, id) => {
+    const existing = cart.find(c => c.id === id);
+    if(existing) existing.qty++; else cart.push({ name, price, id, qty: 1 });
+    window.updateCartUI();
+}
 
-window.inviteModal=()=>{document.getElementById('modal-content').innerHTML=`<h3 class="font-bold mb-4">Invite Staff</h3><input id="iE" class="w-full p-3 border rounded-xl mb-3" placeholder="Staff Email" type="email" required><select id="iR" class="w-full p-3 border rounded-xl mb-4 bg-white"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select><button onclick="window.sI()" class="w-full bg-black text-white py-3 rounded-xl font-bold">Send Invite</button>`;document.getElementById('modal').classList.remove('hidden');}
-window.sI=async()=>{const e=document.getElementById('iE').value.trim(); try{await inviteStaff(e, document.getElementById('iR').value, profile.organization_id); alert('Invitation Sent! They can now Login.'); document.getElementById('modal').classList.add('hidden');}catch(err){alert(err.message);}}
-window.approve=async(i,s)=>{if(confirm('Confirm '+s+'?'))try{await respondToApproval(i,s,profile.id); router('approvals');}catch(e){alert(e.message);}}
+window.updateCartUI = () => {
+    const list = document.getElementById('cart-list'), total = document.getElementById('cart-total');
+    if(!cart.length) { 
+        list.innerHTML = '<div class="text-center py-12 text-gray-300 text-[10px] font-bold uppercase tracking-widest">No Selection</div>'; 
+        total.innerText = '$0.00'; return; 
+    }
+    let sum = 0;
+    list.innerHTML = cart.map(i => {
+        sum += i.price * i.qty;
+        return `<div class="flex justify-between items-center group">
+            <div class="truncate">
+                <div class="text-xs font-bold text-gray-900">${i.name}</div>
+                <div class="text-[10px] font-bold text-gray-400 uppercase font-mono">${i.qty} units @ $${i.price}</div>
+            </div>
+            <button onclick="window.removeFromCart('${i.id}')" class="text-gray-300 hover:text-red-500 transition">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+        </div>`;
+    }).join('');
+    total.innerText = '$' + sum.toFixed(2);
+}
+
+window.removeFromCart = (id) => { cart = cart.filter(c => c.id !== id); window.updateCartUI(); }
+
+window.processCheckout = async () => {
+    if(!cart.length) return;
+    try {
+        await processBarSale(profile.organization_id, profile.assigned_location_id, cart.map(c => ({ product_id: c.id, qty: c.qty, price: c.price })), profile.id);
+        alert('Sale Authenticated Successfully.'); cart = []; window.updateCartUI(); router('bar');
+    } catch(e) { alert(e.message); }
+}
+
+// --- ADMINISTRATIVE FUNCTIONS (Arusha Main Store Level) ---
+
+window.openTransfer = (name, id, from) => {
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-6 uppercase tracking-tight">Stock Movement</h3>
+        <div class="space-y-4">
+            <div>
+                <label class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Selected Item</label>
+                <input value="${name}" disabled class="w-full mt-1 p-3 bg-gray-50 border border-gray-100 rounded-xl text-xs font-bold text-gray-900">
+            </div>
+            <div>
+                <label class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Target Location/Camp</label>
+                <select id="tToLoc" class="w-full mt-1 p-3 border border-gray-200 rounded-xl text-xs bg-white font-bold outline-none focus:border-black"></select>
+            </div>
+            <div>
+                <label class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Quantity to Issue</label>
+                <input id="tQty" type="number" class="w-full mt-1 p-3 border border-gray-200 rounded-xl text-xs font-bold outline-none focus:border-black" placeholder="0.00">
+            </div>
+            <button onclick="window.execTransfer('${id}','${from}')" class="w-full bg-black text-white py-4 rounded-xl font-bold text-xs mt-4 uppercase tracking-widest">Confirm Movement</button>
+        </div>`;
+    
+    getLocations(profile.organization_id).then(locs => {
+        document.getElementById('tToLoc').innerHTML = locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+    });
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+window.execTransfer = async (id, from) => {
+    const to = document.getElementById('tToLoc').value, qty = document.getElementById('tQty').value;
+    try {
+        await transferStock(id, from, to, qty, profile.id, profile.organization_id);
+        alert('Stock movement authorized.'); document.getElementById('modal').classList.add('hidden'); router('inventory');
+    } catch(e) { alert(e.message); }
+}
+
+// Management Renderers
+async function renderStaff(c) {
+    try {
+        const staff = await getStaff(profile.organization_id);
+        const rows = staff.map(s => `
+            <tr class="border-b border-gray-50">
+                <td class="p-4 text-sm font-bold text-gray-900">${s.full_name}</td>
+                <td class="p-4 text-xs text-gray-500 font-medium tracking-tight">${s.email}</td>
+                <td class="p-4 uppercase text-[10px] font-bold text-blue-600 tracking-widest bg-blue-50/50">${s.role}</td>
+            </tr>`).join('');
+        c.innerHTML = `
+            <div class="flex justify-between items-center mb-8">
+                <h1 class="text-xl font-bold uppercase tracking-widest text-gray-400">Team Authorization</h1>
+                <button onclick="window.inviteModal()" class="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest">Grant Access</button>
+            </div>
+            <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                <table class="w-full text-left"><tbody>${rows}</tbody></table>
+            </div>`;
+    } catch(e) {}
+}
+
+window.inviteModal = () => {
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-6">New User Access</h3>
+        <input id="iE" class="w-full p-3 border border-gray-200 rounded-xl mb-3 text-xs font-bold outline-none" placeholder="Official Email Address" type="email">
+        <select id="iR" class="w-full p-3 border border-gray-200 rounded-xl mb-6 bg-white text-xs font-bold outline-none">
+            <option value="storekeeper">Storekeeper</option>
+            <option value="barman">Barman</option>
+            <option value="finance">Finance Specialist</option>
+        </select>
+        <button onclick="window.execInvite()" class="w-full bg-black text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest">Send Portal Invitation</button>`;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+window.execInvite = async () => {
+    const e = document.getElementById('iE').value.trim();
+    try { await inviteStaff(e, document.getElementById('iR').value, profile.organization_id); alert('Success: Invitation sent.'); document.getElementById('modal').classList.add('hidden'); } catch(err) { alert(err.message); }
+}
+
+async function renderSettings(c) {
+    try {
+        const locs = await getLocations(profile.organization_id);
+        const rows = locs.map(l => `
+            <tr class="border-b border-gray-50">
+                <td class="p-4 text-sm font-bold text-gray-900">${l.name}</td>
+                <td class="p-4 text-[10px] font-bold uppercase text-gray-400 tracking-widest">${l.type}</td>
+                <td class="p-4 text-right"><button class="text-[10px] font-bold text-gray-300">Edit Configuration</button></td>
+            </tr>`).join('');
+        c.innerHTML = `
+            <div class="flex justify-between items-center mb-8">
+                <h1 class="text-xl font-bold uppercase tracking-widest text-gray-400">Enterprise Configuration</h1>
+                <button onclick="window.addLoc()" class="bg-black text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest">Register New Store</button>
+            </div>
+            <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+                <table class="w-full text-left"><tbody>${rows}</tbody></table>
+            </div>`;
+    } catch(e) {}
+}
+
+window.addLoc = () => {
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-6 text-gray-900">Add Centralized Store</h3>
+        <input id="nL" class="w-full p-3 border border-gray-200 rounded-xl mb-6 text-xs font-bold outline-none" placeholder="e.g. Mara River Camp Store">
+        <button onclick="window.execAddLoc()" class="w-full bg-black text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest">Register Location</button>`;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+window.execAddLoc = async () => {
+    try { await createLocation(profile.organization_id, document.getElementById('nL').value, 'camp_store'); document.getElementById('modal').classList.add('hidden'); router('settings'); } catch(e) {}
+}
+
+window.approve = async (id, status) => { if(confirm('Are you sure you want to authorize this?')) try { await respondToApproval(id, status, profile.id); router('approvals'); } catch(e) { alert(e.message); } }
