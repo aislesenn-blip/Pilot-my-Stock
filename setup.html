@@ -64,12 +64,14 @@
         import { supabase } from './js/supabase.js';
 
         let userId = null;
+        let userEmail = null;
         let orgId = null;
 
         window.onload = async () => {
             const session = await getSession();
             if(!session) { window.location.href = 'index.html'; return; }
             userId = session.user.id;
+            userEmail = session.user.email;
         };
 
         window.handleStep1 = async () => {
@@ -102,24 +104,32 @@
 
             if(!hq) { alert("Main Store Name is required"); return; }
 
-            btn.innerText = "Initializing System..."; btn.disabled = true;
+            btn.innerText = "Finalizing..."; btn.disabled = true;
 
             try {
                 // 1. Create Main Store
                 const mainLoc = await createLocation(orgId, hq, 'main_store');
                 
-                // 2. Link Manager to HQ & Organization (Finalize Profile)
-                await supabase.from('profiles').update({ 
+                // 2. MASTER FIX: Tumia UPSERT badala ya UPDATE
+                // Hii inahakikisha data inaingia hata kama row ilikuwa haipo
+                const { error: profError } = await supabase.from('profiles').upsert({ 
+                    id: userId,
+                    email: userEmail,
                     organization_id: orgId,
                     assigned_location_id: mainLoc.id,
-                    role: 'manager'
-                }).eq('id', userId);
+                    role: 'manager',
+                    full_name: 'Manager'
+                });
                 
-                // 3. Create Camps (Optional)
+                if(profError) throw profError;
+                
+                // 3. Create Camps
                 if(c1) await createLocation(orgId, c1, 'camp_store', mainLoc.id);
                 if(c2) await createLocation(orgId, c2, 'camp_store', mainLoc.id);
 
-                // 4. Redirect to Dashboard
+                // 4. WAIT 1 SECOND (Muhimu ili database isync kabla ya kurudi Dashboard)
+                await new Promise(r => setTimeout(r, 1000));
+
                 window.location.href = 'dashboard.html';
             } catch(e) { 
                 alert(e.message);
