@@ -16,19 +16,19 @@ window.onload = async () => {
         document.getElementById('avatar').innerText = (profile.full_name || 'U').charAt(0);
         window.logoutAction = logout;
 
-        // MOBILE MENU LOGIC (FIXED)
+        // Mobile Menu Logic
         const sidebar = document.getElementById('sidebar');
         const menuBtn = document.getElementById('mobile-menu-btn');
         const closeBtn = document.getElementById('close-sidebar');
 
         if(menuBtn) {
             menuBtn.addEventListener('click', () => {
-                sidebar.classList.remove('-translate-x-full'); // Telezesha ndani
+                sidebar.classList.remove('-translate-x-full');
             });
         }
         if(closeBtn) {
             closeBtn.addEventListener('click', () => {
-                sidebar.classList.add('-translate-x-full'); // Telezesha nje
+                sidebar.classList.add('-translate-x-full');
             });
         }
 
@@ -40,7 +40,7 @@ window.router = async (view) => {
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-8 h-8 border-2 border-black border-b-transparent rounded-full animate-spin"></div></div>';
     
-    // Funga menu ya simu akibonyeza link
+    // Funga menu ya simu
     document.getElementById('sidebar').classList.add('-translate-x-full');
 
     document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('bg-gray-50', 'text-black'));
@@ -53,13 +53,12 @@ window.router = async (view) => {
     else if (view === 'approvals') await renderApprovals(app);
 };
 
-// --- 1. INVENTORY & TRANSFER ---
+// --- 1. INVENTORY ---
 async function renderInventory(c) {
     try {
         const data = await getInventory(profile.organization_id);
         const locs = await getLocations(profile.organization_id);
         
-        // Transfer Modal HTML
         const modalHtml = `
             <div id="transferModal" class="fixed inset-0 bg-black/50 hidden z-[60] flex items-center justify-center p-4">
                 <div class="bg-white p-6 rounded-xl w-full max-w-sm">
@@ -103,18 +102,17 @@ async function renderSettings(c) {
 async function renderBar(c) {
     try {
         const stock = await getInventory(profile.organization_id);
-        // Onyesha tu vitu vyenye quantity > 0
         const items = stock.filter(i => i.quantity > 0).map(i => `<div onclick="window.addCart('${i.products.name}', ${i.products.selling_price}, '${i.product_id}')" class="bg-white border p-4 rounded-xl cursor-pointer hover:shadow-md active:scale-95 transition"><div class="h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center mb-3 text-xl">🍺</div><h4 class="font-bold text-sm truncate">${i.products.name}</h4><div class="flex justify-between mt-2"><span class="text-xs font-bold">$${i.products.selling_price}</span><span class="text-[10px] text-gray-500">Qty: ${i.quantity}</span></div></div>`).join('');
         c.innerHTML = `<div class="flex flex-col md:flex-row h-full gap-4"><div class="flex-1 overflow-y-auto"><h1 class="text-2xl font-bold mb-4">Bar POS</h1><div class="grid grid-cols-2 md:grid-cols-3 gap-3">${items.length ? items : '<p class="col-span-3 text-gray-400">No stock available to sell.</p>'}</div></div><div class="w-full md:w-80 bg-white border md:border-l border-gray-200 p-4 flex flex-col rounded-xl"><h3 class="font-bold border-b pb-2 mb-2">Current Order</h3><div id="cart-list" class="flex-1 overflow-y-auto space-y-2 mb-2"><p class="text-center text-xs text-gray-400 mt-10">Empty Cart</p></div><div class="pt-2 border-t"><div class="flex justify-between font-bold mb-4"><span>Total</span><span id="cart-total">$0.00</span></div><button onclick="window.checkout()" class="btn-black w-full py-3 rounded-xl font-bold text-sm">Charge & Print</button></div></div></div>`;
         window.renderCart();
     } catch (e) { c.innerHTML = 'Error Bar'; }
 }
 
-// --- 4. STAFF ---
+// --- 4. STAFF SYSTEM ---
 async function renderStaff(c) {
     try {
         const staff = await getStaff(profile.organization_id);
-        const rows = staff.map(s => `<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${s.full_name}</td><td class="p-4 text-xs text-gray-500">${s.email}</td><td class="p-4"><span class="bg-blue-50 text-blue-600 text-[10px] font-bold px-2 py-1 rounded uppercase">${s.role}</span></td></tr>`).join('');
+        const rows = staff.map(s => `<tr class="border-b border-gray-100"><td class="p-4 font-bold text-sm">${s.full_name}</td><td class="p-4 text-xs text-gray-500">${s.email}</td><td class="p-4"><span class="bg-blue-50 text-blue-600 text-[10px] font-bold px-2 py-1 rounded uppercase">${s.role.replace('_', ' ')}</span></td></tr>`).join('');
         c.innerHTML = `<div class="flex justify-between items-end mb-6"><h1 class="text-2xl font-bold">Team</h1><button onclick="window.inviteModal()" class="btn-black px-4 py-2 text-xs font-bold rounded-lg">+ Invite</button></div><div class="glass rounded-xl overflow-hidden"><table class="w-full text-left"><thead class="bg-gray-50 text-[10px] uppercase text-gray-400"><tr><th class="p-4">Name</th><th class="p-4">Email</th><th class="p-4">Role</th></tr></thead><tbody>${rows}</tbody></table></div>`;
     } catch (e) { c.innerHTML = 'Error Staff'; }
 }
@@ -147,7 +145,6 @@ window.checkout = async () => {
     } catch(e) { alert(e.message); } 
 };
 
-// TRANSFER ACTIONS
 window.openTransfer = (name, pid, floc) => {
     document.getElementById('tProdName').value = name;
     document.getElementById('tProdId').value = pid;
@@ -165,11 +162,29 @@ window.submitTransfer = async () => {
     } catch(e) { alert(e.message); }
 };
 
-// Modals
 window.addLoc = () => { document.getElementById('modal-content').innerHTML = `<h3 class="font-bold mb-2">New Location</h3><form onsubmit="event.preventDefault(); window.subLoc()"><input id="nL" placeholder="Name" class="input-field w-full mb-2"><button class="btn-black w-full py-2 rounded">Create</button></form>`; document.getElementById('modal').classList.remove('hidden'); };
 window.subLoc = async () => { try { await createLocation(profile.organization_id, document.getElementById('nL').value, 'camp_store'); document.getElementById('modal').classList.add('hidden'); router('settings'); } catch(e){alert(e.message)} };
 window.editLoc = (id, n, t) => { document.getElementById('modal-content').innerHTML = `<h3 class="font-bold mb-2">Edit</h3><form onsubmit="event.preventDefault(); window.subEdit('${id}')"><input id="eL" value="${n}" class="input-field w-full mb-2"><button class="btn-black w-full py-2 rounded">Update</button></form>`; document.getElementById('modal').classList.remove('hidden'); };
 window.subEdit = async (id) => { try { await updateLocation(id, {name: document.getElementById('eL').value}); document.getElementById('modal').classList.add('hidden'); router('settings'); } catch(e){alert(e.message)} };
-window.inviteModal = () => { document.getElementById('modal-content').innerHTML = `<h3 class="font-bold mb-2">Invite Staff</h3><form onsubmit="event.preventDefault(); window.subInv()"><input id="iE" placeholder="Email" class="input-field w-full mb-2"><select id="iR" class="input-field w-full mb-2"><option value="barman">Barman</option><option value="storekeeper">Storekeeper</option></select><button class="btn-black w-full py-2 rounded">Send</button></form>`; document.getElementById('modal').classList.remove('hidden'); };
-window.subInv = async () => { try { await inviteStaff(document.getElementById('iE').value, document.getElementById('iR').value, profile.organization_id); alert('Sent!'); document.getElementById('modal').classList.add('hidden'); } catch(e){alert(e.message)} };
+
+// --- HII HAPA INVITE MODAL ILIYOREKEBISHWA ---
+window.inviteModal = () => { 
+    document.getElementById('modal-content').innerHTML = `
+    <h3 class="font-bold mb-2">Invite Staff</h3>
+    <form onsubmit="event.preventDefault(); window.subInv()">
+        <input id="iE" placeholder="Email Address" class="input-field w-full mb-2">
+        <label class="text-xs text-gray-500 font-bold">Assign Role:</label>
+        <select id="iR" class="input-field w-full mb-2 bg-white">
+            <option value="storekeeper">Camp Storekeeper</option>
+            <option value="barman">Barman</option>
+            <option value="dept_user">Department User (Kitchen/Housekeeping)</option>
+            <option value="finance">Finance / Management</option>
+        </select>
+        <button class="btn-black w-full py-2 rounded font-bold">Send Invitation</button>
+    </form>`; 
+    document.getElementById('modal').classList.remove('hidden'); 
+};
+
+window.subInv = async () => { try { await inviteStaff(document.getElementById('iE').value, document.getElementById('iR').value, profile.organization_id); alert('Invitation Sent!'); document.getElementById('modal').classList.add('hidden'); } catch(e){alert(e.message)} };
+
 window.approve = async (id, st) => { if(confirm(st+'?')) { try { await respondToApproval(id, st, profile.id); router('approvals'); } catch(e){alert(e.message)} } };
