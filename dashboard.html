@@ -11,84 +11,52 @@
         .nav-active { background-color: #111827 !important; color: #FFFFFF !important; }
         .nav-item:hover { background-color: #F3F4F6; }
         ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 10px; }
-        
         .input-field { border: 1px solid #E5E7EB; padding: 12px; border-radius: 12px; outline: none; transition: 0.2s; background: #fff; width: 100%; font-size: 14px; font-weight: 500; }
         .input-field:focus { border-color: #000; box-shadow: 0 0 0 2px rgba(0,0,0,0.05); }
-        
-        /* DROPDOWN & MODAL STACKING FIX */
+
+        /* BILLION DOLLAR UI: Dropdown Visibility & Stacking */
         #modal { display: none; }
         #modal-content { position: relative; z-index: 1000; overflow: visible !important; border: none; }
         .modal-body { overflow: visible !important; display: flex; flex-direction: column; gap: 1.25rem; }
+        .layer-1 { z-index: 100; position: relative; }
+        .layer-2 { z-index: 90; position: relative; }
         
         .btn-black { background: #000; color: #fff; transition: 0.2s; cursor: pointer; border-radius: 12px; font-weight: 600; text-transform: uppercase; } 
         .btn-black:hover { opacity: 0.8; transform: translateY(-1px); }
-        
         select.input-field { appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%239CA3AF'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px; }
     </style>
 </head>
 <body class="flex h-screen overflow-hidden">
-
     <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-gray-200 flex flex-col transform -translate-x-full md:translate-x-0 md:relative transition-transform duration-300 ease-in-out">
         <div class="h-16 flex items-center justify-between px-6 border-b border-gray-100">
             <span class="font-bold text-lg tracking-tight uppercase">Pilot my Stock.</span>
-            <button id="close-sidebar" class="md:hidden text-gray-500 hover:text-red-500">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
+            <button id="close-sidebar" class="md:hidden text-gray-500"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
-        
         <nav class="flex-1 px-3 space-y-1 overflow-y-auto py-6" id="menu">
-            <button onclick="window.router('inventory')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-inventory">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span class="font-medium text-sm">Inventory Dashboard</span>
-            </button>
-            <button onclick="window.router('bar')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-bar">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span class="font-medium text-sm">Sales & POS</span>
-            </button>
-            <button onclick="window.router('approvals')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-approvals">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span class="font-medium text-sm">Authorization Queue</span>
-            </button>
-            <button onclick="window.router('staff')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-staff">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                <span class="font-medium text-sm">Staff Management</span>
-            </button>
-            <button onclick="window.router('settings')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-settings">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-width="1.5"/></svg>
-                <span class="font-medium text-sm">System Settings</span>
-            </button>
+            <button onclick="window.router('inventory')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-inventory"><span>Inventory Dashboard</span></button>
+            <button onclick="window.router('bar')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-bar"><span>Bar & POS</span></button>
+            <button onclick="window.router('approvals')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-approvals"><span>Approvals Queue</span></button>
+            <button onclick="window.router('staff')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-staff"><span>Team Management</span></button>
+            <button onclick="window.router('settings')" class="nav-item w-full flex items-center gap-3 px-4 py-3 rounded-lg text-gray-500 transition" id="nav-settings"><span>System Settings</span></button>
         </nav>
-
         <div class="p-4 border-t border-gray-100">
             <div class="flex items-center gap-3 p-2 rounded-lg bg-gray-50">
                 <div class="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center font-bold text-xs" id="avatar"></div>
-                <div class="overflow-hidden">
-                    <p class="font-bold text-xs text-gray-900 truncate" id="userName">...</p>
-                    <p class="text-[10px] text-gray-500 truncate uppercase tracking-widest" id="userRole">...</p>
-                </div>
+                <div class="overflow-hidden"><p class="font-bold text-xs truncate" id="userName">...</p><p class="text-[10px] text-gray-500 truncate uppercase" id="userRole">...</p></div>
             </div>
-            <button onclick="window.logoutAction()" class="mt-2 w-full text-xs font-bold text-gray-400 hover:text-red-600 py-2 flex items-center justify-center gap-1 uppercase">
-                Sign Out Account
-            </button>
+            <button onclick="window.logoutAction()" class="mt-2 w-full text-xs font-bold text-gray-400 hover:text-red-600 py-2 uppercase">Sign Out</button>
         </div>
     </aside>
-
     <main class="flex-1 flex flex-col h-screen overflow-hidden relative">
         <div class="md:hidden h-16 bg-white border-b border-gray-200 flex items-center justify-between px-4 z-10 shrink-0">
             <span class="font-bold text-lg uppercase tracking-tight">Pilot my Stock.</span>
-            <button id="mobile-menu-btn" class="p-2 text-gray-600 rounded-lg hover:bg-gray-100">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
+            <button id="mobile-menu-btn" class="p-2 text-gray-600"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
-
         <div id="app-view" class="flex-1 overflow-y-auto p-4 md:p-8 pb-20"></div>
-
         <div id="modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onclick="window.closeModalOutside(event)">
-            <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-8 animate-fade-in relative" id="modal-content" onclick="event.stopPropagation()">
-                </div>
+            <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-8 animate-fade-in relative" id="modal-content" onclick="event.stopPropagation()"></div>
         </div>
     </main>
-
     <script type="module" src="./js/app.js"></script>
 </body>
 </html>
