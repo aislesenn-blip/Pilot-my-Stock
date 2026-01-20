@@ -4,13 +4,39 @@ import { getInventory, getLocations, createLocation, updateLocation, processBarS
 let profile = null;
 let cart = [];
 
+// --- SMART LOAD LOGIC (HAPA NDIPO FIX ILIPO) ---
 window.onload = async () => {
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
-    try {
-        profile = await getCurrentProfile(session.user.id);
-        if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
+    try {
+        // RETRY MECHANISM: Jaribu mara 3 kabla ya kukata tamaa
+        // Hii inapa database muda wa kumaliza "Trigger" ya invite
+        let attempts = 0;
+        const maxAttempts = 3;
+        
+        while (attempts < maxAttempts) {
+            profile = await getCurrentProfile(session.user.id);
+            
+            // Kama profile ipo na ina organization_id, tumefanikiwa!
+            if (profile && profile.organization_id) {
+                break; 
+            }
+            
+            // Kama bado, subiri sekunde 1.5 kisha jaribu tena
+            console.log(`Attempt ${attempts + 1}: Waiting for profile creation...`);
+            attempts++;
+            await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+
+        // Kama baada ya majaribio yote bado hana Organization, ndio mpeleke Setup
+        if (!profile || !profile.organization_id) { 
+            console.warn("Profile incomplete after retries. Redirecting to Setup.");
+            window.location.href = 'setup.html'; 
+            return; 
+        }
+
+        // --- Mfumo unaendelea kawaida hapa chini ---
         document.getElementById('userName').innerText = profile.full_name || 'User';
         document.getElementById('userRole').innerText = (profile.role || 'staff').replace('_', ' ');
         document.getElementById('avatar').innerText = (profile.full_name || 'U').charAt(0);
@@ -33,7 +59,10 @@ window.onload = async () => {
         }
 
         router('inventory');
-    } catch (e) { logout(); }
+    } catch (e) { 
+        console.error("Critical Load Error:", e);
+        logout(); 
+    }
 };
 
 window.router = async (view) => {
@@ -167,7 +196,7 @@ window.subLoc = async () => { try { await createLocation(profile.organization_id
 window.editLoc = (id, n, t) => { document.getElementById('modal-content').innerHTML = `<h3 class="font-bold mb-2">Edit</h3><form onsubmit="event.preventDefault(); window.subEdit('${id}')"><input id="eL" value="${n}" class="input-field w-full mb-2"><button class="btn-black w-full py-2 rounded">Update</button></form>`; document.getElementById('modal').classList.remove('hidden'); };
 window.subEdit = async (id) => { try { await updateLocation(id, {name: document.getElementById('eL').value}); document.getElementById('modal').classList.add('hidden'); router('settings'); } catch(e){alert(e.message)} };
 
-// --- HII HAPA INVITE MODAL ILIYOREKEBISHWA ---
+// --- HII HAPA INVITE MODAL YENYE ROLES ZOTE (FINANCE, DEPT USER) ---
 window.inviteModal = () => { 
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold mb-2">Invite Staff</h3>
