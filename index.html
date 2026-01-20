@@ -62,6 +62,7 @@
 
     <script type="module">
         import { login, register, getCurrentProfile } from './js/auth.js';
+        import { supabase } from './js/supabase.js';
 
         window.switchTab = (tab) => {
             document.getElementById('msg').innerText = '';
@@ -82,41 +83,67 @@
             }
         };
 
+        // --- SMART LOGIN LOGIC ---
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = e.target.querySelector('button');
-            const email = document.getElementById('loginEmail').value;
+            const email = document.getElementById('loginEmail').value.trim();
             const pass = document.getElementById('loginPass').value;
+            
+            document.getElementById('msg').innerText = '';
             btn.innerText = 'Verifying...'; btn.disabled = true;
+
             try {
-                const data = await login(email, pass);
+                // 1. Jaribu ku-Login
+                let { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+
+                if (error) {
+                    // 2. IKIFAIL: Angalia kama ni MWALIKWA (Invite Check)
+                    const { data: invite } = await supabase.from('staff_invites').select('*').ilike('email', email).maybeSingle();
+
+                    if (invite) {
+                        // 3. NI MWALIKWA: Msajili kimya kimya (Hii inakwepa swala la Create Account)
+                        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({ email, password: pass });
+                        if (signUpErr) throw signUpErr;
+                        
+                        // Login sasa baada ya kujisajili
+                        const secondAttempt = await supabase.auth.signInWithPassword({ email, password: pass });
+                        data = secondAttempt.data;
+                        if (secondAttempt.error) throw secondAttempt.error;
+
+                        alert("Welcome to the system!");
+                    } else {
+                        throw error;
+                    }
+                }
+
+                // 4. VERIFY PROFILE & REDIRECT
+                // Tunaita RPC 'claim_my_invite' ili kuhakikisha anaunganishwa na Org yake papo hapo
+                await supabase.rpc('claim_my_invite', { email_to_check: email, user_id_to_link: data.user.id });
+                
                 const profile = await getCurrentProfile(data.user.id);
                 window.location.href = (!profile || !profile.organization_id) ? 'setup.html' : 'dashboard.html';
+
             } catch (err) {
-                document.getElementById('msg').innerText = "Authentication failed.";
+                document.getElementById('msg').innerText = "Authentication failed: " + err.message;
                 btn.innerText = 'Access Portal'; btn.disabled = false;
             }
         });
 
+        // --- STANDARD REGISTER LOGIC (For New Managers Only) ---
         document.getElementById('registerForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = e.target.querySelector('button');
             const name = document.getElementById('regName').value;
-            const email = document.getElementById('regEmail').value;
+            const email = document.getElementById('regEmail').value.trim();
             const pass = document.getElementById('regPass').value;
 
-            if(!name) { document.getElementById('msg').innerText = "Full Name is required"; return; }
-            btn.innerText = 'Creating Account...'; btn.disabled = true;
+            btn.innerText = 'Initializing...'; btn.disabled = true;
 
             try {
                 await register(email, pass, name);
-                const loginData = await login(email, pass); // Auto login
-                const profile = await getCurrentProfile(loginData.user.id);
-                if (profile && profile.organization_id) {
-                    window.location.href = 'dashboard.html';
-                } else {
-                    window.location.href = 'setup.html';
-                }
+                const loginData = await login(email, pass);
+                window.location.href = 'setup.html';
             } catch (err) {
                 document.getElementById('msg').innerText = err.message;
                 btn.innerText = 'Create Account'; btn.disabled = false;
