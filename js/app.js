@@ -8,7 +8,7 @@ let currentActionId = null;
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
-// --- NOTIFICATIONS ---
+// --- NOTIFICATIONS (ENGLISH ONLY) ---
 window.showNotification = (message, type = 'success') => {
     const existing = document.getElementById('notif-toast');
     if(existing) existing.remove();
@@ -39,29 +39,20 @@ window.showConfirm = (title, desc, callback) => {
 
 // --- INITIALIZATION ---
 window.onload = async () => {
-    // 1. MOBILE MENU LOGIC (HAPA NDIPO FIX ILIPO)
-    const mobileBtn = document.getElementById('mobile-menu-btn');
-    const closeSidebarBtn = document.getElementById('close-sidebar');
-    const sidebar = document.getElementById('sidebar');
-
-    if (mobileBtn && sidebar) {
-        mobileBtn.addEventListener('click', () => {
-            // Ondoa class inayoficha sidebar (-translate-x-full)
-            sidebar.classList.remove('-translate-x-full');
-        });
-    }
-
-    if (closeSidebarBtn && sidebar) {
-        closeSidebarBtn.addEventListener('click', () => {
-            // Rudisha class inayoficha sidebar
-            sidebar.classList.add('-translate-x-full');
-        });
-    }
-
-    // 2. CSS INJECTION
+    // Inject CSS
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
+
+    // Mobile Menu Logic (Redundant safety)
+    const mobileBtn = document.getElementById('mobile-menu-btn');
+    const sidebar = document.getElementById('sidebar');
+    if(mobileBtn && sidebar) {
+        mobileBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sidebar.classList.remove('-translate-x-full');
+        });
+    }
 
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
@@ -116,11 +107,8 @@ function applyStrictPermissions(role) {
 }
 
 window.router = async (view) => {
-    // Close mobile menu automatically when a link is clicked
     const sidebar = document.getElementById('sidebar');
-    if (window.innerWidth < 768 && sidebar) {
-        sidebar.classList.add('-translate-x-full');
-    }
+    if (window.innerWidth < 768 && sidebar) sidebar.classList.add('-translate-x-full');
 
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
@@ -201,7 +189,7 @@ window.openEditProduct = (id, name, cost, selling) => {
 };
 
 window.deleteProduct = (id) => {
-    window.showConfirm("Delete Product?", "This will delete the product. If it has history, it cannot be deleted.", async () => {
+    window.showConfirm("Delete Product?", "This will delete the product history.", async () => {
         try {
             const { error } = await supabase.from('products').delete().eq('id', id);
             if (error) throw error;
@@ -211,46 +199,49 @@ window.deleteProduct = (id) => {
     });
 };
 
-// --- APPROVALS ---
+// --- REPORTS (FIXED WITH ERROR DISPLAY) ---
+async function renderReports(c) {
+    try {
+        // Hapa ndipo tunavutia data. Kama kuna error, itaenda kwenye 'catch'
+        const { data: logs, error } = await supabase.from('transactions')
+            .select(`
+                *, 
+                products (name), 
+                locations:to_location_id (name), 
+                from_loc:from_location_id (name), 
+                profiles:user_id (full_name, role)
+            `)
+            .eq('organization_id', profile.organization_id)
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        if (error) throw error; // Tupa error kwa CATCH block
+
+        currentLogs = (profile.role === 'manager' || profile.role === 'finance') ? logs : logs.filter(l => l.from_location_id === profile.assigned_location_id || l.to_location_id === profile.assigned_location_id);
+        const showFinancials = (profile.role === 'manager' || profile.role === 'finance');
+        const totalSales = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
+        const totalProfit = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
+
+        c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1><div class="flex gap-2">${showFinancials ? `<button onclick="window.exportCSV()" class="btn-primary bg-green-700 hover:bg-green-800 text-xs px-4 flex gap-2 items-center">EXPORT CSV</button>` : ''}</div></div>${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">$${totalSales.toLocaleString()}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">$${totalProfit.toLocaleString()}</p></div></div>` : ''}<div class="flex flex-wrap gap-2 mb-6"><button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button><button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button><button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button><button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Time & Date</th><th class="text-xs font-bold text-slate-400 uppercase">User Identity</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
+        window.filterLogs('all');
+    } catch(e) { 
+        console.error("REPORT ERROR:", e); // Hii itaonekana kwa Console
+        // HII NDIO SEHEMU MPYA: ITAKUONYESHA ERROR HALISI KWENYE SCREEN
+        c.innerHTML = `<div class="p-12 text-center border-2 border-red-100 rounded-xl bg-red-50"><h3 class="text-red-600 font-bold text-lg mb-2">SYSTEM ERROR</h3><p class="text-slate-700 font-mono text-xs bg-white p-4 border rounded inline-block text-left shadow-sm">${e.message || JSON.stringify(e)}</p></div>`; 
+    }
+}
+
+window.filterLogs=(t)=>{let f=currentLogs;if(t==='sale')f=currentLogs.filter(l=>l.type==='sale');else if(t==='transfer')f=currentLogs.filter(l=>['pending_transfer','transfer_completed','receive'].includes(l.type));else if(t==='consumption')f=currentLogs.filter(l=>l.to_location_id&&l.locations?.type==='department');const b=document.getElementById('logsBody');if(!f.length){b.innerHTML='<tr><td colspan="6" class="text-center text-xs text-gray-400 py-12">No records found.</td></tr>';return;}b.innerHTML=f.map(l=>{const d=new Date(l.created_at);let a=l.type.replace('_',' ').toUpperCase(),c='bg-blue-50 text-blue-600',det=`${l.from_loc?.name||'-'} ➜ ${l.locations?.name||'-'}`;if(l.type==='sale'){c='bg-green-50 text-green-600';det='POS Sale';}if(l.type==='receive'){c='bg-slate-100 text-slate-600';det='Supplier Entry';}if(l.locations?.type==='department'){a='CONSUMPTION';c='bg-orange-50 text-orange-600';}const u=l.profiles?.full_name||'System',r=l.profiles?.role||'Unknown';return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="py-3 pl-4"><div class="font-bold text-slate-700 text-xs">${d.toLocaleDateString()}</div><div class="text-[10px] text-slate-400 font-mono">${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div></td><td><div class="flex items-center gap-2"><div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500">${u.charAt(0)}</div><div><div class="font-bold text-slate-900 text-xs">${u}</div><div class="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50 px-1 rounded inline-block">${r}</div></div></div></td><td class="font-bold uppercase text-xs text-slate-700">${l.products?.name}</td><td><span class="font-bold uppercase ${c} text-[9px] tracking-widest px-2 py-1 rounded-full">${a}</span></td><td class="text-xs uppercase text-gray-500 font-medium">${det}</td><td class="font-mono font-bold text-slate-900">${l.quantity}</td></tr>`}).join('');}
+window.exportCSV=()=>{let r=[["Date","Time","User","Role","Item","Action","Details","Qty"]],t=document.getElementById("logsBody");if(!t)return;t.querySelectorAll("tr").forEach(tr=>{let d=[];tr.querySelectorAll("td").forEach(td=>d.push(td.innerText.replace('\n',' ')));if(d.length)r.push([d[0],d[0],d[1],d[1],d[2],d[3],d[4],d[5]])});let c="data:text/csv;charset=utf-8,"+r.map(e=>e.join(",")).join("\n"),l=document.createElement("a");l.setAttribute("href",encodeURI(c));l.setAttribute("download",`Report.csv`);document.body.appendChild(l);l.click();}
+
 async function renderApprovals(c){
     if(profile.role==='storekeeper') return;
     const q=await getPendingApprovals(profile.organization_id);
     const r=q.map(x=>`<tr><td class="font-bold text-sm uppercase py-3 pl-4">${x.products?.name}</td><td class="font-bold text-blue-600 font-mono">${x.quantity}</td><td class="text-xs text-slate-500 uppercase tracking-wide">To: ${x.to_loc?.name}</td><td class="text-right pr-4"><button onclick="window.approve('${x.id}','approved')" class="text-[10px] font-bold bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-700 shadow-sm">APPROVE</button></td></tr>`).join('');
     c.innerHTML=`<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Approvals</h1><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${r.length?r:'<tr><td colspan="4" class="text-center text-xs text-slate-400 py-12">No pending approvals.</td></tr>'}</tbody></table></div></div>`;
 }
+window.approve=async(id,s)=>{if(confirm('Authorize?'))try{await respondToApproval(id,s,profile.id);window.showNotification("Authorized","success");router('approvals');}catch(e){window.showNotification(e.message,"error");}}
 
-window.approve = (id, s) => {
-    window.showConfirm("Authorize Transfer?", "Confirm movement of stock.", async () => {
-        try {
-            await respondToApproval(id, s, profile.id);
-            window.showNotification("Authorized Successfully", "success");
-            router('approvals');
-        } catch(e){ window.showNotification(e.message, "error"); }
-    });
-};
-
-// --- OTHER MODULES ---
-async function renderBar(c) {
-    try {
-        if (!profile.assigned_location_id) { c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">Configuration Error</h3><p>You are not assigned to any Bar Location.</p></div>`; return; }
-        const inv = await getInventory(profile.organization_id);
-        const items = inv.filter(x => x.location_id === profile.assigned_location_id);
-        const itemCards = items.map(x => `<div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border p-6 rounded-2xl cursor-pointer hover:border-slate-900 transition shadow-sm group hover:shadow-lg hover:-translate-y-1"><h4 class="font-bold text-xs uppercase mb-3 text-slate-800 group-hover:text-slate-900">${x.products.name}</h4><div class="flex justify-between items-center"><span class="font-bold font-mono text-sm">$${x.products.selling_price}</span><span class="text-[10px] text-slate-400 font-bold uppercase bg-slate-50 px-2 py-1 rounded">Qty: ${x.quantity}</span></div></div>`).join('');
-        c.innerHTML = `<div class="flex flex-col lg:flex-row h-full gap-10"><div class="flex-1 overflow-y-auto"><h1 class="text-3xl font-bold uppercase mb-8 text-slate-900">POS Terminal</h1><div class="grid grid-cols-2 md:grid-cols-3 gap-5">${items.length ? itemCards : '<div class="col-span-3 text-center py-10 text-slate-400 font-bold text-xs uppercase">No stock assigned to this Bar.</div>'}</div></div><div class="w-full lg:w-96 bg-white border border-slate-200 rounded-3xl p-8 shadow-xl h-fit sticky top-0"><h3 class="font-bold uppercase mb-6 text-sm tracking-widest text-slate-400">Current Ticket</h3><div id="cart-list" class="space-y-4 mb-8 min-h-[150px]"></div><div class="border-t border-slate-100 pt-6"><div class="flex justify-between font-bold mb-6 text-xl text-slate-900"><span>Total</span><span id="cart-total">$0.00</span></div><button onclick="window.checkout()" class="btn-primary w-full py-4 text-sm shadow-xl">Complete Sale</button></div></div></div>`;
-        window.renderCart();
-    } catch (e) { console.error("Bar Error:", e); c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">System Error</h3><p>Could not load POS. Please contact admin.</p></div>`; }
-}
-async function renderReports(c) {
-    try {
-        const { data: logs } = await supabase.from('transactions').select('*, products(name), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name, role)').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }).limit(100);
-        currentLogs = (profile.role === 'manager' || profile.role === 'finance') ? logs : logs.filter(l => l.from_location_id === profile.assigned_location_id || l.to_location_id === profile.assigned_location_id);
-        const showFinancials = (profile.role === 'manager' || profile.role === 'finance');
-        const totalSales = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
-        const totalProfit = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
-        c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1><div class="flex gap-2">${showFinancials ? `<button onclick="window.exportCSV()" class="btn-primary bg-green-700 hover:bg-green-800 text-xs px-4 flex gap-2 items-center">EXPORT CSV</button>` : ''}</div></div>${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">$${totalSales.toLocaleString()}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">$${totalProfit.toLocaleString()}</p></div></div>` : ''}<div class="flex flex-wrap gap-2 mb-6"><button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button><button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button><button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button><button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Time & Date</th><th class="text-xs font-bold text-slate-400 uppercase">User Identity</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
-        window.filterLogs('all');
-    } catch(e) { c.innerHTML = '<p class="text-red-500">Error.</p>'; }
-}
 async function renderStaff(c){
     const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);
     const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');
@@ -262,7 +253,7 @@ async function renderSettings(c){
 }
 
 // --- MODALS ---
-window.addProductModal = () => { /* same */ 
+window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3>
@@ -271,7 +262,7 @@ window.addProductModal = () => { /* same */
         <button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
     document.getElementById('modal').style.display = 'flex'; 
 };
-window.addStockModal = async () => { /* same */
+window.addStockModal = async () => {
     if(profile.role !== 'manager') return;
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).order('name');
@@ -283,7 +274,7 @@ window.addStockModal = async () => { /* same */
         <button onclick="window.execAddStock()" class="btn-primary mt-6">Confirm Entry</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
-window.issueModal = async (name, id, fromLoc) => { /* same */
+window.issueModal = async (name, id, fromLoc) => {
     selectedDestinationId = null;
     let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
     if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
@@ -301,7 +292,7 @@ window.issueModal = async (name, id, fromLoc) => { /* same */
         <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-4">Request Transfer</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
-window.selectDest = (el, id) => { /* same */
+window.selectDest = (el, id) => {
     document.querySelectorAll('.dest-card').forEach(c => {
         c.classList.remove('bg-slate-900', 'border-slate-900', 'text-white');
         c.querySelector('span').classList.remove('text-white'); 
@@ -318,7 +309,7 @@ window.selectDest = (el, id) => { /* same */
     el.querySelectorAll('span')[1].classList.add('text-slate-300');
     selectedDestinationId = id;
 };
-window.inviteModal = async () => { /* same */
+window.inviteModal = async () => { 
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3>
@@ -328,7 +319,7 @@ window.inviteModal = async () => { /* same */
         <button onclick="window.execInvite()" class="btn-primary mt-6">Send Invitation</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
-window.addStoreModal=()=>{ /* same */
+window.addStoreModal=()=>{ 
     document.getElementById('modal-content').innerHTML=`
     <h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3>
     <div class="input-group"><label class="input-label">Name</label><input id="nN" class="input-field"></div>
@@ -336,7 +327,7 @@ window.addStoreModal=()=>{ /* same */
     <button onclick="window.execAddStore()" class="btn-primary mt-6">Create</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
-// --- EXEC FUNCTIONS ---
+
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); const { error } = await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: profile.organization_id }); if(error) throw error; await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Updated Successfully", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
