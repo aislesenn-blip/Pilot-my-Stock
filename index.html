@@ -61,7 +61,7 @@
     </div>
 
     <script type="module">
-        import { login, register, getCurrentProfile } from './js/auth.js';
+        import { login, register } from './js/auth.js';
         import { supabase } from './js/supabase.js';
 
         window.switchTab = (tab) => {
@@ -83,7 +83,7 @@
             }
         };
 
-        // --- SMART LOGIN LOGIC ---
+        // --- SMART LOGIN LOGIC (MASTER FIX) ---
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = e.target.querySelector('button');
@@ -91,46 +91,54 @@
             const pass = document.getElementById('loginPass').value;
             
             document.getElementById('msg').innerText = '';
-            btn.innerText = 'Verifying...'; btn.disabled = true;
+            btn.innerText = 'Verifying Identity...'; btn.disabled = true;
 
             try {
-                // 1. Jaribu ku-Login
+                // 1. Try Normal Login
                 let { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
 
+                // 2. If Login Fails, Check if Invited
                 if (error) {
-                    // 2. IKIFAIL: Angalia kama ni MWALIKWA (Invite Check)
                     const { data: invite } = await supabase.from('staff_invites').select('*').ilike('email', email).maybeSingle();
 
                     if (invite) {
-                        // 3. NI MWALIKWA: Msajili kimya kimya (Hii inakwepa swala la Create Account)
-                        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({ email, password: pass });
-                        if (signUpErr) throw signUpErr;
+                        // 3. User is Invited -> Register them automatically with the password they just typed
+                        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({ 
+                            email, 
+                            password: pass // User sets their password here
+                        });
                         
-                        // Login sasa baada ya kujisajili
-                        const secondAttempt = await supabase.auth.signInWithPassword({ email, password: pass });
-                        data = secondAttempt.data;
-                        if (secondAttempt.error) throw secondAttempt.error;
+                        if (signUpErr) throw signUpErr;
 
-                        alert("Welcome to the system!");
+                        // Force Login immediately
+                        const secondAttempt = await supabase.auth.signInWithPassword({ email, password: pass });
+                        if (secondAttempt.error) throw secondAttempt.error;
+                        
+                        data = secondAttempt.data; // Success
                     } else {
-                        throw error;
+                        throw new Error("Invalid credentials or no account found.");
                     }
                 }
 
-                // 4. VERIFY PROFILE & REDIRECT
-                // Tunaita RPC 'claim_my_invite' ili kuhakikisha anaunganishwa na Org yake papo hapo
+                // 4. Link Invite to Profile & Redirect
+                // (Trigger will handle profile creation, we just link the invite)
                 await supabase.rpc('claim_my_invite', { email_to_check: email, user_id_to_link: data.user.id });
                 
-                const profile = await getCurrentProfile(data.user.id);
-                window.location.href = (!profile || !profile.organization_id) ? 'setup.html' : 'dashboard.html';
+                // Check if they need Setup (First Time) or Dashboard
+                const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
+                
+                if (!profile || !profile.organization_id) {
+                    window.location.href = 'setup.html';
+                } else {
+                    window.location.href = 'dashboard.html';
+                }
 
             } catch (err) {
-                document.getElementById('msg').innerText = "Authentication failed: " + err.message;
+                document.getElementById('msg').innerText = err.message;
                 btn.innerText = 'Access Portal'; btn.disabled = false;
             }
         });
 
-        // --- STANDARD REGISTER LOGIC (For New Managers Only) ---
         document.getElementById('registerForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = e.target.querySelector('button');
@@ -152,3 +160,4 @@
     </script>
 </body>
 </html>
+
