@@ -16,13 +16,17 @@ window.onload = async () => {
         
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
-        // FORCE FULL NAME UPDATE (Audit Trail needs names)
-        if (!profile.full_name || profile.full_name === 'Manager') {
-            const newName = prompt("Action Required: Please enter your Full Name (e.g., John Doe) for system records:");
-            if (newName && newName.length > 2) {
-                await supabase.from('profiles').update({ full_name: newName }).eq('id', profile.id);
-                profile.full_name = newName;
+        // --- FIX 1: KILA MTU AOMBWE JINA (Sio Manager tu) ---
+        // Kama jina ni tupu, AU jina linafanana na Role (mfano kuitwa 'Storekeeper'), tunamulazimisha kuweka jina
+        const genericNames = ['Manager', 'Storekeeper', 'Barman', 'Finance'];
+        if (!profile.full_name || profile.full_name.length < 3 || genericNames.includes(profile.full_name)) {
+            let newName = null;
+            while (!newName || newName.length < 3) {
+                newName = prompt(`Welcome ${profile.role.toUpperCase()}! Please enter your Full Name (e.g. Juma Hamisi) to continue:`);
             }
+            // Update Database
+            await supabase.from('profiles').update({ full_name: newName }).eq('id', profile.id);
+            profile.full_name = newName; // Update local variable
         }
         
         window.logoutAction = logout;
@@ -31,7 +35,7 @@ window.onload = async () => {
         document.getElementById('mobile-menu-btn')?.addEventListener('click', () => document.getElementById('sidebar').classList.remove('-translate-x-full'));
         document.getElementById('close-sidebar')?.addEventListener('click', () => document.getElementById('sidebar').classList.add('-translate-x-full'));
         
-        // Update Sidebar
+        // Update Sidebar Name
         const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
         if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
 
@@ -106,10 +110,9 @@ async function renderInventory(c) {
     } catch(e) { console.error(e); }
 }
 
-// REPORTS (RE-ENGINEERED FOR "EVIDENCE")
+// REPORTS
 async function renderReports(c) {
     try {
-        // Query VOTE profile ROLE na FULL NAME
         const { data: logs } = await supabase.from('transactions').select('*, products(name), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name, role)').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }).limit(100);
         
         currentLogs = (profile.role === 'manager' || profile.role === 'finance') ? logs : logs.filter(l => l.from_location_id === profile.assigned_location_id || l.to_location_id === profile.assigned_location_id);
@@ -150,7 +153,7 @@ async function renderReports(c) {
     } catch(e) { c.innerHTML = '<p class="text-red-500">Error.</p>'; }
 }
 
-// SMART FILTER LOGIC
+// FILTER LOGIC
 window.filterLogs = (type) => {
     let filtered = currentLogs;
     if (type === 'sale') filtered = currentLogs.filter(l => l.type === 'sale');
@@ -163,7 +166,7 @@ window.filterLogs = (type) => {
     tbody.innerHTML = filtered.map(l => {
         const d = new Date(l.created_at);
         const dateStr = d.toLocaleDateString();
-        const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}); // USHAHIDI WA MUDA
+        const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}); 
         
         let action = l.type.replace('_', ' ').toUpperCase();
         let color = 'bg-blue-50 text-blue-600';
@@ -173,7 +176,6 @@ window.filterLogs = (type) => {
         if(l.type === 'receive') { color = 'bg-slate-100 text-slate-600'; details = 'Supplier Entry'; }
         if(l.locations?.type === 'department') { action = 'CONSUMPTION'; color = 'bg-orange-50 text-orange-600'; }
 
-        // USER IDENTITY CARD (USHAHIDI WA MTU)
         const userName = l.profiles?.full_name || 'System';
         const userRole = l.profiles?.role || 'Unknown';
         const roleBadgeColor = userRole === 'manager' ? 'text-purple-600 bg-purple-50' : (userRole === 'storekeeper' ? 'text-blue-600 bg-blue-50' : 'text-slate-500 bg-slate-50');
@@ -200,29 +202,22 @@ window.filterLogs = (type) => {
     }).join('');
 };
 
-// EXPORT CSV (UPDATED WITH ROLES & TIME)
 window.exportCSV = () => {
     let rows = [["Date", "Time", "User Name", "User Role", "Item", "Action", "Details", "Quantity"]];
     const table = document.getElementById("logsBody");
     if(!table) return;
     
-    // Hatutumii table HTML direct sababu ina HTML tags nyingi. Tunatumia data source (filtered logs)
-    // Lakini kwa haraka, tuvute kutoka kwenye table rows zilizopo rendered
-    // Au bora zaidi, tutumie logic ile ile ya mapping:
-    
-    // (Simpler Implementation utilizing current view logic extraction)
     table.querySelectorAll("tr").forEach(tr => {
         let rowData = [];
-        // Hii ni hacky kidogo, tunasafisha text
         let cols = tr.querySelectorAll("td");
         if(cols.length) {
-            rowData.push(cols[0].innerText.replace('\n', ' ')); // Date Time
-            rowData.push(cols[1].querySelector('.text-slate-900').innerText); // Name
-            rowData.push(cols[1].querySelector('.uppercase').innerText); // Role
-            rowData.push(cols[2].innerText); // Item
-            rowData.push(cols[3].innerText); // Action
-            rowData.push(cols[4].innerText); // Details
-            rowData.push(cols[5].innerText); // Qty
+            rowData.push(cols[0].innerText.replace('\n', ' ')); 
+            rowData.push(cols[1].querySelector('.text-slate-900').innerText); 
+            rowData.push(cols[1].querySelector('.uppercase').innerText); 
+            rowData.push(cols[2].innerText); 
+            rowData.push(cols[3].innerText); 
+            rowData.push(cols[4].innerText); 
+            rowData.push(cols[5].innerText); 
             rows.push(rowData);
         }
     });
@@ -235,7 +230,6 @@ window.exportCSV = () => {
     link.click();
 };
 
-// APPROVALS
 async function renderApprovals(c) {
     if(profile.role === 'storekeeper') return;
     const q = await getPendingApprovals(profile.organization_id);
@@ -244,20 +238,17 @@ async function renderApprovals(c) {
 }
 window.approve=async(id,s)=>{ if(confirm('Authorize this transfer?')) try { await respondToApproval(id,s,profile.id); router('approvals'); } catch(e){} }
 
-// TEAM
 async function renderStaff(c) {
     const { data: active } = await supabase.from('profiles').select('*').eq('organization_id', profile.organization_id);
     const { data: pending } = await supabase.from('staff_invites').select('*').eq('organization_id', profile.organization_id).eq('status', 'pending');
     c.innerHTML = `<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${active.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${pending.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;
 }
 
-// SETTINGS
 async function renderSettings(c) { 
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
     c.innerHTML = `<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${locs.map(l=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${l.name}</td><td class="text-xs font-bold uppercase text-gray-400">${l.type.replace('_', ' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`; 
 }
 
-// BAR POS
 async function renderBar(c) {
     const inv = await getInventory(profile.organization_id);
     const items = inv.filter(x => x.location_id === profile.assigned_location_id).map(x => `<div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border p-6 rounded-2xl cursor-pointer hover:border-slate-900 transition shadow-sm group hover:shadow-lg hover:-translate-y-1"><h4 class="font-bold text-xs uppercase mb-3 text-slate-800 group-hover:text-slate-900">${x.products.name}</h4><div class="flex justify-between items-center"><span class="font-bold font-mono text-sm">$${x.products.selling_price}</span><span class="text-[10px] text-slate-400 font-bold uppercase bg-slate-50 px-2 py-1 rounded">Qty: ${x.quantity}</span></div></div>`).join('');
@@ -265,11 +256,29 @@ async function renderBar(c) {
     window.renderCart();
 }
 
-// --- 5. MODALS (Z-INDEX FIXED) ---
-// Nimetumia 'relative' na 'z-index' kupanga layers
+// --- 5. MODALS (FIXED: Z-INDEX & STACKING) ---
+// Kanuni: Element ya juu (Select) inapewa Z-index kubwa (z-50)
+// Element ya chini (Input) inapewa Z-index ndogo (z-10) ili isizibe ya juu ikifunguka.
+
 window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3><div class="input-group relative z-20"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-5 mb-8 relative z-10"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div><button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3>
+        <div class="input-group relative z-[50]">
+            <label class="input-label">Name</label>
+            <input id="pN" class="input-field uppercase">
+        </div>
+        <div class="grid grid-cols-2 gap-5 mb-8 relative z-[40]">
+            <div class="input-group mb-0">
+                <label class="input-label">Cost</label>
+                <input id="pC" type="number" class="input-field">
+            </div>
+            <div class="input-group mb-0">
+                <label class="input-label">Selling</label>
+                <input id="pS" type="number" class="input-field">
+            </div>
+        </div>
+        <button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
     document.getElementById('modal').style.display = 'flex'; 
 };
 
@@ -277,7 +286,21 @@ window.addStockModal = async () => {
     if(profile.role !== 'manager') return;
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).order('name');
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-8 uppercase text-center">Receive from Supplier</h3><div class="input-group relative z-30"><label class="input-label">Item</label><select id="sP" class="input-field">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div class="input-group relative z-20"><label class="input-label">Store</label><select id="sL" class="input-field">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div><div class="input-group relative z-10"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div><button onclick="window.execAddStock()" class="btn-primary">Confirm</button>`;
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-8 uppercase text-center">Receive from Supplier</h3>
+        <div class="input-group relative z-[50]">
+            <label class="input-label">Item</label>
+            <select id="sP" class="input-field">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select>
+        </div>
+        <div class="input-group relative z-[40]">
+            <label class="input-label">Store</label>
+            <select id="sL" class="input-field">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select>
+        </div>
+        <div class="input-group relative z-[10]">
+            <label class="input-label">Qty</label>
+            <input id="sQ" type="number" class="input-field">
+        </div>
+        <button onclick="window.execAddStock()" class="btn-primary mt-4">Confirm</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
@@ -287,17 +310,17 @@ window.issueModal = async (name, id, fromLoc) => {
 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">Move Stock</h3>
-        <div class="input-group relative z-30">
+        <div class="input-group relative z-[50]">
             <label class="input-label">Item</label>
             <input value="${name}" disabled class="input-field bg-slate-50 uppercase text-gray-500">
         </div>
-        <div class="input-group relative z-20">
+        <div class="input-group relative z-[40]">
             <label class="input-label">To Destination</label>
             <select id="tTo" class="input-field cursor-pointer hover:border-black">
                 ${locs.map(l=>`<option value="${l.id}">${l.name} (${l.type.replace('_',' ')})</option>`).join('')}
             </select>
         </div>
-        <div class="input-group relative z-10">
+        <div class="input-group relative z-[10]">
             <label class="input-label">Quantity</label>
             <input id="tQty" type="number" class="input-field">
         </div>
@@ -307,11 +330,29 @@ window.issueModal = async (name, id, fromLoc) => {
 
 window.inviteModal = async () => { 
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3><div class="input-group relative z-30"><label class="input-label">Email</label><input id="iE" class="input-field"></div><div class="input-group relative z-20"><label class="input-label">Role</label><select id="iR" class="input-field"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div><div class="input-group relative z-10"><label class="input-label">Assign Location</label><select id="iL" class="input-field">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div><button onclick="window.execInvite()" class="btn-primary">Send</button>`; 
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3>
+        <div class="input-group relative z-[50]">
+            <label class="input-label">Email</label>
+            <input id="iE" class="input-field">
+        </div>
+        <div class="input-group relative z-[40]">
+            <label class="input-label">Role</label>
+            <select id="iR" class="input-field">
+                <option value="storekeeper">Storekeeper</option>
+                <option value="barman">Barman</option>
+                <option value="finance">Finance</option>
+            </select>
+        </div>
+        <div class="input-group relative z-[30]">
+            <label class="input-label">Assign Location</label>
+            <select id="iL" class="input-field">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select>
+        </div>
+        <button onclick="window.execInvite()" class="btn-primary mt-4">Send</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
 
-window.addStoreModal=()=>{ document.getElementById('modal-content').innerHTML=`<h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3><div class="input-group"><label class="input-label">Name</label><input id="nN" class="input-field"></div><div class="input-group"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div><button onclick="window.execAddStore()" class="btn-primary">Create</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.addStoreModal=()=>{ document.getElementById('modal-content').innerHTML=`<h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3><div class="input-group relative z-[50]"><label class="input-label">Name</label><input id="nN" class="input-field"></div><div class="input-group relative z-[40]"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div><button onclick="window.execAddStore()" class="btn-primary mt-4">Create</button>`; document.getElementById('modal').style.display = 'flex'; };
 
 // --- EXEC FUNCTIONS ---
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; router('inventory'); } catch(e) { alert(e.message); } };
