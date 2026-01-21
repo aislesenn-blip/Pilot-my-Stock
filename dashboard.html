@@ -9,35 +9,36 @@
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; color: #0F172A; }
         
-        /* Navigation */
         .nav-active { background-color: #0F172A !important; color: #FFFFFF !important; border-left: 4px solid #3B82F6; }
         .nav-item:hover { background-color: #F1F5F9; color: #0F172A; }
         
-        /* PREMIUM TABLE STYLE */
-        .table-container { 
-            background: white; 
-            border: 1px solid #E2E8F0; 
-            border-radius: 16px; 
-            overflow: hidden; 
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        }
-        .table-responsive { width: 100%; overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; }
-        th { background: #F8FAFC; color: #64748B; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 16px 24px; text-align: left; border-bottom: 1px solid #E2E8F0; }
+        /* SCROLLBAR */
+        ::-webkit-scrollbar { width: 6px; height: 6px; } 
+        ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        
+        /* TABLE STYLING - FIX YA KUPITILIZA */
+        .table-card { background: white; border: 1px solid #E2E8F0; border-radius: 16px; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.05); width: 100%; }
+        .table-scroll { overflow-x: auto; width: 100%; }
+        table { width: 100%; border-collapse: collapse; white-space: nowrap; } /* nowrap inazuia maneno kuvunjika hovyo */
+        th { background-color: #F8FAFC; color: #64748B; font-size: 11px; font-weight: 700; text-transform: uppercase; padding: 16px 24px; text-align: left; border-bottom: 1px solid #E2E8F0; }
         td { padding: 16px 24px; border-bottom: 1px solid #F1F5F9; font-size: 13px; color: #334155; }
         tr:last-child td { border-bottom: none; }
         tr:hover td { background-color: #F8FAFC; }
 
-        /* PREMIUM MODAL STYLE */
+        /* MODAL STYLING (ILE ULIYOIPENDA) */
         #modal { display: none; }
-        .modal-box { background: white; width: 100%; max-width: 480px; border-radius: 20px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1); padding: 32px; position: relative; z-index: 50; }
+        #modal-content { position: relative; z-index: 1000; overflow: visible !important; }
         .input-group { display: flex; flex-direction: column; gap: 8px; }
-        .input-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748B; letter-spacing: 0.05em; }
-        .input-field { border: 1px solid #CBD5E1; padding: 14px 16px; border-radius: 10px; width: 100%; outline: none; font-size: 14px; transition: all 0.2s; color: #1E293B; background: #FFF; }
-        .input-field:focus { border-color: #0F172A; box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.05); }
+        .input-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748B; }
+        .input-field { border: 1px solid #CBD5E1; padding: 12px 16px; border-radius: 8px; width: 100%; outline: none; background: #fff; font-size: 14px; color: #1E293B; }
+        .input-field:focus { border-color: #0F172A; ring: 1px solid #0F172A; }
         
-        .btn-primary { background: #0F172A; color: #fff; padding: 16px; border-radius: 10px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; width: 100%; transition: 0.2s; margin-top: 10px; }
+        .btn-primary { background: #0F172A; color: #fff; padding: 14px 20px; border-radius: 10px; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; transition: 0.2s; cursor: pointer; }
         .btn-primary:hover { background: #1E293B; transform: translateY(-1px); }
+        
+        /* Z-INDEX LAYERS */
+        .z-high { z-index: 50; position: relative; }
+        .z-mid { z-index: 40; position: relative; }
     </style>
 </head>
 <body class="flex h-screen overflow-hidden">
@@ -61,11 +62,10 @@
     <main class="flex-1 flex flex-col h-screen overflow-hidden relative bg-[#F8FAFC]">
         <div class="md:hidden h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 z-10 shrink-0 shadow-sm"><span class="font-bold text-lg uppercase tracking-tight text-slate-900">Pilot my Stock.</span><button id="mobile-menu-btn" class="p-2 text-slate-600 rounded-lg hover:bg-slate-100"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg></button></div>
 
-        <div id="app-view" class="flex-1 overflow-y-auto p-6 md:p-10 pb-24 max-w-7xl mx-auto w-full"></div>
+        <div id="app-view" class="flex-1 overflow-y-auto p-6 md:p-10 pb-24 w-full max-w-7xl mx-auto"></div>
 
         <div id="modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 transition-opacity duration-300" onclick="window.closeModalOutside(event)">
-            <div class="modal-box" id="modal-content" onclick="event.stopPropagation()">
-                </div>
+            <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl p-8 transform transition-all scale-100 border border-gray-100" id="modal-content" onclick="event.stopPropagation()"></div>
         </div>
     </main>
     <script type="module" src="./js/app.js"></script>
