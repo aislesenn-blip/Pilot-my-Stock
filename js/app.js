@@ -3,11 +3,11 @@ import { getInventory, createLocation, processBarSale, getPendingApprovals, resp
 import { supabase } from './supabase.js';
 
 let profile = null; let cart = []; let currentLogs = [];
-let selectedDestinationId = null; // HII MPYA KWA AJILI YA GRID SELECTION
+let selectedDestinationId = null;
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
-// --- NOTIFICATIONS ---
+// --- ENGLISH NOTIFICATIONS ONLY ---
 window.showNotification = (message, type = 'success') => {
     const existing = document.getElementById('notif-toast');
     if(existing) existing.remove();
@@ -22,10 +22,8 @@ window.showNotification = (message, type = 'success') => {
 
 // --- INITIALIZATION ---
 window.onload = async () => {
-    // SIO LAZIMA TENA KU-INJECT CSS YA OVERFLOW MAANA HATUTUMII DROPDOWN KWENYE MOVE STOCK
-    // LAKINI TUNAIACHA KWA USALAMA WA MODALS ZINGINE
     const style = document.createElement('style');
-    style.innerHTML = `#modal, #modal-content { overflow: visible !important; }`;
+    style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
 
     const session = await getSession();
@@ -43,26 +41,44 @@ window.onload = async () => {
         profile = prof;
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
+        // CHECK NAME - IF INVALID, SHOW PREMIUM MODAL
         const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
         const currentName = profile.full_name ? profile.full_name.trim() : "";
         if (currentName.length < 3 || forbiddenNames.some(n => currentName.toLowerCase().includes(n.toLowerCase()))) {
-            let newName = null;
-            while (!newName || newName.length < 3) {
-                newName = prompt(`⚠️ ACCOUNT ACTION:\n\nPlease enter your FULL LEGAL NAME to proceed:`);
-            }
-            await supabase.from('profiles').update({ full_name: newName }).eq('id', profile.id);
-            profile.full_name = newName;
+            // Show the Premium Modal
+            document.getElementById('name-modal').style.display = 'flex';
+        } else {
+            // Update UI Name
+            const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
+            if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
         }
         
         window.logoutAction = logout;
-        const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
-        if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
-
         applyStrictPermissions(profile.role);
         const defaultView = (profile.role === 'barman') ? 'bar' : 'inventory';
         router(defaultView);
         
     } catch (e) { console.error(e); }
+};
+
+// --- SAVE NAME FUNCTION (PREMIUM MODAL ACTION) ---
+window.saveName = async () => {
+    const nameInput = document.getElementById('userNameInput').value;
+    if (!nameInput || nameInput.length < 3) {
+        return window.showNotification("Please enter a valid full name", "error");
+    }
+
+    const { error } = await supabase.from('profiles').update({ full_name: nameInput }).eq('id', profile.id);
+    if (error) {
+        window.showNotification("Error saving name. Try again.", "error");
+    } else {
+        profile.full_name = nameInput;
+        document.getElementById('name-modal').style.display = 'none';
+        window.showNotification("Welcome, " + nameInput, "success");
+        
+        const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
+        if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
+    }
 };
 
 // --- PERMISSIONS ---
@@ -135,9 +151,8 @@ window.approve=async(id,s)=>{if(confirm('Authorize?'))try{await respondToApprova
 async function renderStaff(c){const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;}
 async function renderSettings(c){const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;}
 
-// --- MODALS (REDESIGNED: GRID SELECTION INSTEAD OF DROPDOWN) ---
+// --- MODALS ---
 
-// 1. ADD PRODUCT
 window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
     document.getElementById('modal-content').innerHTML = `
@@ -162,13 +177,12 @@ window.addStockModal = async () => {
     document.getElementById('modal').style.display = 'flex';
 };
 
-// 3. MOVE STOCK - **NEW DESIGN: VISUAL GRID SELECTOR**
+// 3. MOVE STOCK (GRID SELECTOR)
 window.issueModal = async (name, id, fromLoc) => { 
-    selectedDestinationId = null; // Reset selection
+    selectedDestinationId = null;
     let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
     if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
 
-    // Create Grid HTML
     const gridHTML = locs.map(l => `
         <div onclick="window.selectDest(this, '${l.id}')" 
              class="dest-card border border-slate-200 p-4 rounded-xl cursor-pointer hover:border-slate-900 hover:bg-slate-50 transition flex flex-col items-center justify-center gap-1 text-center">
@@ -179,50 +193,31 @@ window.issueModal = async (name, id, fromLoc) => {
 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-6 uppercase text-center">Move Stock</h3>
-        
         <div class="input-group mb-6"><label class="input-label">Product</label><input value="${name}" disabled class="input-field bg-slate-50 uppercase text-slate-500 font-bold"></div>
-        
-        <div class="mb-6">
-            <label class="input-label mb-3 block">Select Destination</label>
-            <div class="grid grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">
-                ${gridHTML || '<p class="text-xs text-slate-400 col-span-2 text-center py-4">No destinations available.</p>'}
-            </div>
-        </div>
-        
+        <div class="mb-6"><label class="input-label mb-3 block">Select Destination</label><div class="grid grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">${gridHTML || '<p class="text-xs text-slate-400 col-span-2 text-center py-4">No destinations available.</p>'}</div></div>
         <div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field" placeholder="0"></div>
-        
         <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-4">Request Transfer</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
-// HELPER FOR GRID SELECTION
 window.selectDest = (el, id) => {
-    // Remove active class from all
     document.querySelectorAll('.dest-card').forEach(c => {
         c.classList.remove('bg-slate-900', 'border-slate-900', 'text-white');
-        c.querySelector('span').classList.remove('text-white'); // Name
-        c.querySelectorAll('span')[1].classList.remove('text-slate-300'); // Type
-        // Restore defaults
+        c.querySelector('span').classList.remove('text-white'); 
+        c.querySelectorAll('span')[1].classList.remove('text-slate-300');
         c.classList.add('border-slate-200', 'hover:border-slate-900', 'hover:bg-slate-50');
         c.querySelector('span').classList.add('text-slate-800');
         c.querySelectorAll('span')[1].classList.add('text-slate-400');
     });
-
-    // Add active class to clicked
     el.classList.remove('border-slate-200', 'hover:border-slate-900', 'hover:bg-slate-50');
     el.classList.add('bg-slate-900', 'border-slate-900');
-    
-    // Fix inner text colors
     el.querySelector('span').classList.remove('text-slate-800');
     el.querySelector('span').classList.add('text-white');
-    
     el.querySelectorAll('span')[1].classList.remove('text-slate-400');
     el.querySelectorAll('span')[1].classList.add('text-slate-300');
-
     selectedDestinationId = id;
 };
 
-// 4. INVITE STAFF (DROPDOWN IS FINE HERE, BUT COULD BE GRID IF YOU WANT)
 window.inviteModal = async () => { 
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
     document.getElementById('modal-content').innerHTML = `
@@ -243,12 +238,27 @@ window.addStoreModal=()=>{
     document.getElementById('modal').style.display = 'flex'; 
 };
 
-// --- EXEC FUNCTIONS ---
+// --- EXEC FUNCTIONS (UPDATED TO ENGLISH + RPC) ---
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
-window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); await supabase.from('inventory').insert({ product_id: pid, location_id: lid, quantity: qty, organization_id: profile.organization_id }); await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Received", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
+
+window.execAddStock = async () => { 
+    try { 
+        const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; 
+        if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); 
+        
+        // USE RPC FOR CALCULATION
+        const { error } = await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: profile.organization_id });
+        if(error) throw error;
+
+        await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); 
+        document.getElementById('modal').style.display = 'none'; 
+        window.showNotification("Stock Updated Successfully", "success"); 
+        router('inventory'); 
+    } catch(e) { window.showNotification(e.message, "error"); }
+};
+
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
 
-// EXEC ISSUE (UPDATED TO USE GLOBAL VARIABLE)
 window.execIssue = async (pId, fId) => { 
     try { 
         const qty = document.getElementById('tQty').value;
@@ -259,7 +269,7 @@ window.execIssue = async (pId, fId) => {
         document.getElementById('modal').style.display = 'none'; 
         window.showNotification("Transfer Requested", "success"); 
         router('inventory'); 
-    } catch(e){ window.showNotification(e.message, "error"); }
+    } catch(e){ window.showNotification(e.message, "error"); } // Message will be in English from services.js or generic error
 };
 
 window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
