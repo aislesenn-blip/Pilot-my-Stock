@@ -1,6 +1,6 @@
 import { supabase } from './supabase.js';
 
-// 1. INVENTORY & CATALOG SERVICES
+// 1. INVENTORY & CATALOG
 export async function getInventory(orgId) {
     const { data, error } = await supabase
         .from('inventory')
@@ -10,120 +10,95 @@ export async function getInventory(orgId) {
     return data;
 }
 
-// 2. TRANSFER SYSTEM (Updated to match Proposal: Request -> Approve -> Move)
+// 2. TRANSFER REQUEST (Point 3 - Approval Workflow)
 export async function transferStock(productId, fromLocId, toLocId, quantity, userId, orgId) {
-    // Badala ya kuhamisha moja kwa moja, tunatengeneza 'TRANSFER REQUEST'
-    // Hii inatekeleza Pointi ya 3 (Approval Workflows)
-    
-    // 1. Hakikisha stock ipo kule inakotoka (Validation)
-    const { data: sourceStock } = await supabase.from('inventory').select('quantity').eq('product_id', productId).eq('location_id', fromLocId).single();
-    if (!sourceStock || sourceStock.quantity < quantity) throw new Error("Stock haitoshi kuanzisha request hii.");
+    // A. Validate Stock
+    const { data: source } = await supabase.from('inventory').select('quantity').eq('product_id', productId).eq('location_id', fromLocId).single();
+    if (!source || Number(source.quantity) < Number(quantity)) throw new Error("Stock haitoshi.");
 
-    // 2. Rekodi Transaction kama 'PENDING' (Hii itaonekana kwenye Approvals Tab)
+    // B. Create Pending Request (Sio Transfer kamili bado)
     const { error } = await supabase.from('transactions').insert({
         organization_id: orgId,
         user_id: userId,
         product_id: productId,
         from_location_id: fromLocId,
         to_location_id: toLocId,
-        type: 'pending_transfer', // Sio 'transfer' tena, ni 'pending'
+        type: 'pending_transfer', // Status: Pending
         quantity: quantity,
-        total_value: 0
+        total_value: 0,
+        profit: 0
     });
-
     if (error) throw error;
-    return "Request sent for approval.";
+    return "Request Sent to Management";
 }
 
-// 3. APPROVAL ENGINE (Hii ndiyo inayohamisha mzigo KWELI)
+// 3. APPROVAL PROCESS (Point 3 - Manager/Finance Action)
 export async function getPendingApprovals(orgId) {
-    // Inavuta requests zote ambazo hazijajibiwa
     const { data } = await supabase.from('transactions')
         .select('*, products(name), from_loc:from_location_id(name), to_loc:to_location_id(name)')
         .eq('organization_id', orgId)
-        .eq('type', 'pending_transfer'); 
+        .eq('type', 'pending_transfer');
     return data || [];
 }
 
 export async function respondToApproval(transId, action, userId) {
-    // 1. Pata taarifa za transaction hiyo
     const { data: trans } = await supabase.from('transactions').select('*').eq('id', transId).single();
-    if (!trans) throw new Error("Transaction not found");
+    if (!trans) throw new Error("Transaction Missing");
 
     if (action === 'approved') {
-        // --- LOGIC YA KUHAMISHA MZIGO (Hii ilikosekana mwanzo) ---
-        
-        // A. Punguza 'From Location'
-        const { data: sourceStock } = await supabase.from('inventory').select('*').eq('product_id', trans.product_id).eq('location_id', trans.from_location_id).single();
-        if (!sourceStock || sourceStock.quantity < trans.quantity) throw new Error("Stock haitoshi kukamilisha approval.");
-        
-        await supabase.from('inventory').update({ quantity: Number(sourceStock.quantity) - Number(trans.quantity) }).eq('id', sourceStock.id);
+        // A. Kata Mzigo Stoo A
+        const { data: source } = await supabase.from('inventory').select('*').eq('product_id', trans.product_id).eq('location_id', trans.from_location_id).single();
+        if(Number(source.quantity) < Number(trans.quantity)) throw new Error("Stock Low");
+        await supabase.from('inventory').update({ quantity: Number(source.quantity) - Number(trans.quantity) }).eq('id', source.id);
 
-        // B. Ongeza 'To Location'
-        const { data: destStock } = await supabase.from('inventory').select('*').eq('product_id', trans.product_id).eq('location_id', trans.to_location_id).single();
-        
-        if (destStock) {
-            await supabase.from('inventory').update({ quantity: Number(destStock.quantity) + Number(trans.quantity) }).eq('id', destStock.id);
+        // B. Ongeza Mzigo Stoo B (Camp/Kitchen)
+        const { data: dest } = await supabase.from('inventory').select('*').eq('product_id', trans.product_id).eq('location_id', trans.to_location_id).single();
+        if (dest) {
+            await supabase.from('inventory').update({ quantity: Number(dest.quantity) + Number(trans.quantity) }).eq('id', dest.id);
         } else {
-            await supabase.from('inventory').insert({
-                organization_id: trans.organization_id,
-                product_id: trans.product_id,
-                location_id: trans.to_location_id,
-                quantity: trans.quantity
-            });
+            await supabase.from('inventory').insert({ organization_id: trans.organization_id, product_id: trans.product_id, location_id: trans.to_location_id, quantity: trans.quantity });
         }
-
-        // C. Update Transaction Status
+        
+        // C. Update Transaction to 'Completed' (Audit Trail)
         await supabase.from('transactions').update({ type: 'transfer_completed', performed_by: userId }).eq('id', transId);
-    
-    } else if (action === 'rejected') {
+    } else {
+        // D. Reject
         await supabase.from('transactions').update({ type: 'transfer_rejected', performed_by: userId }).eq('id', transId);
     }
 }
 
-// 4. POS / BAR SALES (Point 4 - Inakata Stock na Kuweka Rekodi)
-export async function processBarSale(orgId, locationId, items, userId) {
-    let totalSaleValue = 0;
-
+// 4. BAR POS & PROFIT CALCULATION (Point 4)
+export async function processBarSale(orgId, locId, items, userId) {
     for (const item of items) {
-        // A. Punguza Stock
-        const { data: stock } = await supabase.from('inventory').select('*').eq('product_id', item.product_id).eq('location_id', locationId).single();
-        if (!stock || stock.quantity < item.qty) throw new Error(`Stock haitoshi kwa ${item.name}`);
+        // Pata Cost Price ili kupiga hesabu ya Faida
+        const { data: product } = await supabase.from('products').select('cost_price').eq('id', item.product_id).single();
+        
+        // Kata Stock
+        const { data: stock } = await supabase.from('inventory').select('*').eq('product_id', item.product_id).eq('location_id', locId).single();
+        if (!stock || Number(stock.quantity) < Number(item.qty)) throw new Error(`Out of stock: ${item.name}`);
         
         await supabase.from('inventory').update({ quantity: Number(stock.quantity) - Number(item.qty) }).eq('id', stock.id);
-
-        // B. Rekodi Transaction (Sale)
-        const saleValue = item.price * item.qty;
-        totalSaleValue += saleValue;
-
+        
+        // Hesabu
+        const salesValue = item.price * item.qty;
+        const costValue = product.cost_price * item.qty;
+        const profit = salesValue - costValue; // Hii ndio Point 4: Gross Profit
+        
+        // Rekodi
         await supabase.from('transactions').insert({
             organization_id: orgId,
             user_id: userId,
             product_id: item.product_id,
-            from_location_id: locationId, 
+            from_location_id: locId,
             type: 'sale',
             quantity: item.qty,
-            total_value: saleValue
+            total_value: salesValue,
+            profit: profit // Tunahifadhi faida
         });
     }
-    return totalSaleValue;
 }
 
-// 5. UTILS (Helpers)
-export async function getLocations(orgId) {
-    const { data } = await supabase.from('locations').select('*').eq('organization_id', orgId);
-    return data;
-}
-
+// 5. SETUP UTILS
 export async function createLocation(orgId, name, type) {
     await supabase.from('locations').insert({ organization_id: orgId, name: name.toUpperCase(), type });
-}
-
-export async function getStaff(orgId) {
-    const { data } = await supabase.from('profiles').select('*').eq('organization_id', orgId);
-    return data;
-}
-
-export async function inviteStaff(email, role, orgId, locId) {
-     await supabase.from('staff_invites').insert({ email, role, organization_id: orgId, assigned_location_id: locId, status: 'pending' });
 }
