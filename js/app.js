@@ -3,29 +3,29 @@ import { getInventory, createLocation, processBarSale, getPendingApprovals, resp
 import { supabase } from './supabase.js';
 
 let profile = null; let cart = []; let currentLogs = [];
+let selectedDestinationId = null; // HII MPYA KWA AJILI YA GRID SELECTION
+
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
-// --- NOTIFICATIONS (ENGLISH ONLY) ---
+// --- NOTIFICATIONS ---
 window.showNotification = (message, type = 'success') => {
     const existing = document.getElementById('notif-toast');
     if(existing) existing.remove();
     const div = document.createElement('div');
     div.id = 'notif-toast';
-    div.style.cssText = `position: fixed; top: 20px; right: 20px; padding: 16px 24px; border-radius: 12px; color: white; font-weight: bold; z-index: 9999999; box-shadow: 0 10px 25px rgba(0,0,0,0.3); display: flex; align-items: center; gap: 10px; animation: slideIn 0.3s ease-out; font-size: 13px; text-transform: uppercase; letter-spacing: 1px;`;
+    div.className = `fixed top-5 right-5 px-6 py-4 rounded-xl text-white font-bold shadow-2xl z-[10000] flex items-center gap-3 transition-all duration-300 transform translate-y-0`;
     div.style.backgroundColor = type === 'success' ? '#0f172a' : '#ef4444'; 
     div.innerHTML = `<span>${message}</span>`;
     document.body.appendChild(div);
-    setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 300); }, 4000);
+    setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 300); }, 3000);
 };
 
 // --- INITIALIZATION ---
 window.onload = async () => {
-    // FORCE CSS FIX: Hii inahakikisha hakuna kitu kinakatwa (Overflow Visible)
+    // SIO LAZIMA TENA KU-INJECT CSS YA OVERFLOW MAANA HATUTUMII DROPDOWN KWENYE MOVE STOCK
+    // LAKINI TUNAIACHA KWA USALAMA WA MODALS ZINGINE
     const style = document.createElement('style');
-    style.innerHTML = `
-        #modal, #modal-content, .modal-box { overflow: visible !important; }
-        .input-group { position: relative; } /* Muhimu kwa Z-Index */
-    `;
+    style.innerHTML = `#modal, #modal-content { overflow: visible !important; }`;
     document.head.appendChild(style);
 
     const session = await getSession();
@@ -45,17 +45,13 @@ window.onload = async () => {
 
         const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
         const currentName = profile.full_name ? profile.full_name.trim() : "";
-        
         if (currentName.length < 3 || forbiddenNames.some(n => currentName.toLowerCase().includes(n.toLowerCase()))) {
             let newName = null;
             while (!newName || newName.length < 3) {
-                newName = prompt(`⚠️ ACCOUNT SETUP REQUIRED:\n\nPlease enter your FULL LEGAL NAME to activate your account:`);
+                newName = prompt(`⚠️ ACCOUNT ACTION:\n\nPlease enter your FULL LEGAL NAME to proceed:`);
             }
-            const { error } = await supabase.from('profiles').update({ full_name: newName }).eq('id', profile.id);
-            if (!error) {
-                profile.full_name = newName;
-                window.showNotification("Profile Identity Verified", "success");
-            }
+            await supabase.from('profiles').update({ full_name: newName }).eq('id', profile.id);
+            profile.full_name = newName;
         }
         
         window.logoutAction = logout;
@@ -79,7 +75,6 @@ function applyStrictPermissions(role) {
     else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
 }
 
-// --- ROUTER ---
 window.router = async (view) => {
     if (profile.role === 'barman' && view !== 'bar') { window.showNotification("Access Denied: POS Only", "error"); return; }
     if (profile.role === 'storekeeper' && ['approvals', 'settings', 'staff'].includes(view)) { window.showNotification("Restricted Area", "error"); return; }
@@ -140,67 +135,111 @@ window.approve=async(id,s)=>{if(confirm('Authorize?'))try{await respondToApprova
 async function renderStaff(c){const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;}
 async function renderSettings(c){const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;}
 
-// --- FIXED MODALS (PARENT DIV Z-INDEX APPLIED) ---
+// --- MODALS (REDESIGNED: GRID SELECTION INSTEAD OF DROPDOWN) ---
 
+// 1. ADD PRODUCT
 window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3>
-        <div class="input-group" style="z-index: 50;"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
-        <div class="grid grid-cols-2 gap-5 mb-8" style="z-index: 40;"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
-        <button onclick="window.execAddProduct()" class="btn-primary" style="z-index: 10;">Save</button>`;
+        <div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
+        <div class="grid grid-cols-2 gap-5 mb-8"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
+        <button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
     document.getElementById('modal').style.display = 'flex'; 
 };
 
-// 1. RECEIVE STOCK (Top to Bottom Z-Index)
+// 2. RECEIVE STOCK
 window.addStockModal = async () => {
     if(profile.role !== 'manager') return;
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).order('name');
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">Receive from Supplier</h3>
-        <div class="input-group" style="z-index: 50;"><label class="input-label">Item</label><select id="sP" class="input-field cursor-pointer">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
-        <div class="input-group" style="z-index: 40;"><label class="input-label">Store</label><select id="sL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
-        <div class="input-group" style="z-index: 10;"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div>
-        <button onclick="window.execAddStock()" class="btn-primary mt-6" style="z-index: 5;">Confirm Entry</button>`;
+        <div class="input-group"><label class="input-label">Item</label><select id="sP" class="input-field cursor-pointer">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
+        <div class="input-group"><label class="input-label">Store</label><select id="sL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
+        <div class="input-group"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div>
+        <button onclick="window.execAddStock()" class="btn-primary mt-6">Confirm Entry</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
-// 2. MOVE STOCK (HAPA NIMEPANDISHA DIV YA KATI IWE JUU YA CHINI)
+// 3. MOVE STOCK - **NEW DESIGN: VISUAL GRID SELECTOR**
 window.issueModal = async (name, id, fromLoc) => { 
+    selectedDestinationId = null; // Reset selection
     let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
     if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
 
+    // Create Grid HTML
+    const gridHTML = locs.map(l => `
+        <div onclick="window.selectDest(this, '${l.id}')" 
+             class="dest-card border border-slate-200 p-4 rounded-xl cursor-pointer hover:border-slate-900 hover:bg-slate-50 transition flex flex-col items-center justify-center gap-1 text-center">
+            <span class="font-bold text-xs uppercase text-slate-800">${l.name}</span>
+            <span class="text-[9px] font-bold text-slate-400 tracking-wider uppercase">${l.type.replace('_',' ')}</span>
+        </div>
+    `).join('');
+
     document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-8 uppercase text-center">Move Stock</h3>
+        <h3 class="font-bold text-lg mb-6 uppercase text-center">Move Stock</h3>
         
-        <div class="input-group" style="z-index: 20;"><label class="input-label">Item</label><input value="${name}" disabled class="input-field bg-slate-50 uppercase text-gray-500"></div>
+        <div class="input-group mb-6"><label class="input-label">Product</label><input value="${name}" disabled class="input-field bg-slate-50 uppercase text-slate-500 font-bold"></div>
         
-        <div class="input-group" style="z-index: 50;"><label class="input-label">To Destination</label><select id="tTo" class="input-field cursor-pointer hover:border-black">${locs.map(l=>`<option value="${l.id}">${l.name} (${l.type.replace('_',' ')})</option>`).join('')}</select></div>
+        <div class="mb-6">
+            <label class="input-label mb-3 block">Select Destination</label>
+            <div class="grid grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">
+                ${gridHTML || '<p class="text-xs text-slate-400 col-span-2 text-center py-4">No destinations available.</p>'}
+            </div>
+        </div>
         
-        <div class="input-group" style="z-index: 10;"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div>
+        <div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field" placeholder="0"></div>
         
-        <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-6" style="z-index: 5;">Request Transfer</button>`;
+        <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-4">Request Transfer</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
+// HELPER FOR GRID SELECTION
+window.selectDest = (el, id) => {
+    // Remove active class from all
+    document.querySelectorAll('.dest-card').forEach(c => {
+        c.classList.remove('bg-slate-900', 'border-slate-900', 'text-white');
+        c.querySelector('span').classList.remove('text-white'); // Name
+        c.querySelectorAll('span')[1].classList.remove('text-slate-300'); // Type
+        // Restore defaults
+        c.classList.add('border-slate-200', 'hover:border-slate-900', 'hover:bg-slate-50');
+        c.querySelector('span').classList.add('text-slate-800');
+        c.querySelectorAll('span')[1].classList.add('text-slate-400');
+    });
+
+    // Add active class to clicked
+    el.classList.remove('border-slate-200', 'hover:border-slate-900', 'hover:bg-slate-50');
+    el.classList.add('bg-slate-900', 'border-slate-900');
+    
+    // Fix inner text colors
+    el.querySelector('span').classList.remove('text-slate-800');
+    el.querySelector('span').classList.add('text-white');
+    
+    el.querySelectorAll('span')[1].classList.remove('text-slate-400');
+    el.querySelectorAll('span')[1].classList.add('text-slate-300');
+
+    selectedDestinationId = id;
+};
+
+// 4. INVITE STAFF (DROPDOWN IS FINE HERE, BUT COULD BE GRID IF YOU WANT)
 window.inviteModal = async () => { 
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3>
-        <div class="input-group" style="z-index: 50;"><label class="input-label">Email</label><input id="iE" class="input-field" placeholder="email@company.com"></div>
-        <div class="input-group" style="z-index: 40;"><label class="input-label">Role</label><select id="iR" class="input-field cursor-pointer"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div>
-        <div class="input-group" style="z-index: 30;"><label class="input-label">Assign Location</label><select id="iL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
-        <button onclick="window.execInvite()" class="btn-primary mt-6" style="z-index: 10;">Send Invitation</button>`; 
+        <div class="input-group"><label class="input-label">Email</label><input id="iE" class="input-field" placeholder="email@company.com"></div>
+        <div class="input-group"><label class="input-label">Role</label><select id="iR" class="input-field cursor-pointer"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div>
+        <div class="input-group"><label class="input-label">Assign Location</label><select id="iL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
+        <button onclick="window.execInvite()" class="btn-primary mt-6">Send Invitation</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
 
 window.addStoreModal=()=>{ 
     document.getElementById('modal-content').innerHTML=`
     <h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3>
-    <div class="input-group" style="z-index: 50;"><label class="input-label">Name</label><input id="nN" class="input-field"></div>
-    <div class="input-group" style="z-index: 40;"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div>
-    <button onclick="window.execAddStore()" class="btn-primary mt-6" style="z-index: 10;">Create</button>`; 
+    <div class="input-group"><label class="input-label">Name</label><input id="nN" class="input-field"></div>
+    <div class="input-group"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div>
+    <button onclick="window.execAddStore()" class="btn-primary mt-6">Create</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
 
@@ -208,7 +247,21 @@ window.addStoreModal=()=>{
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); await supabase.from('inventory').insert({ product_id: pid, location_id: lid, quantity: qty, organization_id: profile.organization_id }); await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Received", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
-window.execIssue = async (pId, fId) => { try { await transferStock(pId, fId, document.getElementById('tTo').value, document.getElementById('tQty').value, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Transfer Requested", "success"); router('inventory'); } catch(e){ window.showNotification(e.message, "error"); }};
+
+// EXEC ISSUE (UPDATED TO USE GLOBAL VARIABLE)
+window.execIssue = async (pId, fId) => { 
+    try { 
+        const qty = document.getElementById('tQty').value;
+        if (!selectedDestinationId) return window.showNotification("Select Destination", "error");
+        if (!qty || qty <= 0) return window.showNotification("Enter Quantity", "error");
+
+        await transferStock(pId, fId, selectedDestinationId, qty, profile.id, profile.organization_id); 
+        document.getElementById('modal').style.display = 'none'; 
+        window.showNotification("Transfer Requested", "success"); 
+        router('inventory'); 
+    } catch(e){ window.showNotification(e.message, "error"); }
+};
+
 window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
 window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart();}
 window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText='$0.00'; return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText='$'+sum.toFixed(2); }
