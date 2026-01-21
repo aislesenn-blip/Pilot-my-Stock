@@ -4,7 +4,7 @@ import { supabase } from './supabase.js';
 
 let profile = null; let cart = []; let currentLogs = [];
 let selectedDestinationId = null; 
-let currentActionId = null; // For Confirm Modal
+let currentActionId = null; 
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
@@ -28,7 +28,6 @@ window.showConfirm = (title, desc, callback) => {
     document.getElementById('confirm-modal').style.display = 'flex';
     
     const btn = document.getElementById('confirm-btn');
-    // Remove old listeners to prevent stacking
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
     
@@ -40,6 +39,26 @@ window.showConfirm = (title, desc, callback) => {
 
 // --- INITIALIZATION ---
 window.onload = async () => {
+    // 1. MOBILE MENU LOGIC (HAPA NDIPO FIX ILIPO)
+    const mobileBtn = document.getElementById('mobile-menu-btn');
+    const closeSidebarBtn = document.getElementById('close-sidebar');
+    const sidebar = document.getElementById('sidebar');
+
+    if (mobileBtn && sidebar) {
+        mobileBtn.addEventListener('click', () => {
+            // Ondoa class inayoficha sidebar (-translate-x-full)
+            sidebar.classList.remove('-translate-x-full');
+        });
+    }
+
+    if (closeSidebarBtn && sidebar) {
+        closeSidebarBtn.addEventListener('click', () => {
+            // Rudisha class inayoficha sidebar
+            sidebar.classList.add('-translate-x-full');
+        });
+    }
+
+    // 2. CSS INJECTION
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
@@ -97,6 +116,12 @@ function applyStrictPermissions(role) {
 }
 
 window.router = async (view) => {
+    // Close mobile menu automatically when a link is clicked
+    const sidebar = document.getElementById('sidebar');
+    if (window.innerWidth < 768 && sidebar) {
+        sidebar.classList.add('-translate-x-full');
+    }
+
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active'));
@@ -112,7 +137,7 @@ window.router = async (view) => {
     } catch (err) { window.showNotification("Error loading view", "error"); }
 };
 
-// --- INVENTORY MODULE (NOW WITH EDIT & DELETE) ---
+// --- INVENTORY MODULE ---
 async function renderInventory(c) {
     const { data: catalog } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const stock = await getInventory(profile.organization_id);
@@ -176,7 +201,7 @@ window.openEditProduct = (id, name, cost, selling) => {
 };
 
 window.deleteProduct = (id) => {
-    window.showConfirm("Delete Product?", "This will delete the product and ALL its history permanently.", async () => {
+    window.showConfirm("Delete Product?", "This will delete the product. If it has history, it cannot be deleted.", async () => {
         try {
             const { error } = await supabase.from('products').delete().eq('id', id);
             if (error) throw error;
@@ -186,7 +211,7 @@ window.deleteProduct = (id) => {
     });
 };
 
-// --- APPROVALS (UPDATED WITH CONFIRM MODAL) ---
+// --- APPROVALS ---
 async function renderApprovals(c){
     if(profile.role==='storekeeper') return;
     const q=await getPendingApprovals(profile.organization_id);
@@ -204,8 +229,8 @@ window.approve = (id, s) => {
     });
 };
 
-// --- OTHER MODULES (UNCHANGED BUT INCLUDED) ---
-async function renderBar(c) { /* ...same as before... */
+// --- OTHER MODULES ---
+async function renderBar(c) {
     try {
         if (!profile.assigned_location_id) { c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">Configuration Error</h3><p>You are not assigned to any Bar Location.</p></div>`; return; }
         const inv = await getInventory(profile.organization_id);
@@ -215,7 +240,7 @@ async function renderBar(c) { /* ...same as before... */
         window.renderCart();
     } catch (e) { console.error("Bar Error:", e); c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">System Error</h3><p>Could not load POS. Please contact admin.</p></div>`; }
 }
-async function renderReports(c) { /* ...same... */
+async function renderReports(c) {
     try {
         const { data: logs } = await supabase.from('transactions').select('*, products(name), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name, role)').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }).limit(100);
         currentLogs = (profile.role === 'manager' || profile.role === 'finance') ? logs : logs.filter(l => l.from_location_id === profile.assigned_location_id || l.to_location_id === profile.assigned_location_id);
@@ -226,18 +251,18 @@ async function renderReports(c) { /* ...same... */
         window.filterLogs('all');
     } catch(e) { c.innerHTML = '<p class="text-red-500">Error.</p>'; }
 }
-async function renderStaff(c){ /* ...same... */
+async function renderStaff(c){
     const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);
     const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');
     c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;
 }
-async function renderSettings(c){ /* ...same... */
+async function renderSettings(c){
     const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);
     c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;
 }
 
 // --- MODALS ---
-window.addProductModal = () => { /* ...same... */
+window.addProductModal = () => { /* same */ 
     if(profile.role !== 'manager') return; 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3>
@@ -246,7 +271,7 @@ window.addProductModal = () => { /* ...same... */
         <button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
     document.getElementById('modal').style.display = 'flex'; 
 };
-window.addStockModal = async () => { /* ...same... */
+window.addStockModal = async () => { /* same */
     if(profile.role !== 'manager') return;
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).order('name');
@@ -258,7 +283,7 @@ window.addStockModal = async () => { /* ...same... */
         <button onclick="window.execAddStock()" class="btn-primary mt-6">Confirm Entry</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
-window.issueModal = async (name, id, fromLoc) => { /* ...same (Grid)... */
+window.issueModal = async (name, id, fromLoc) => { /* same */
     selectedDestinationId = null;
     let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
     if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
@@ -276,7 +301,7 @@ window.issueModal = async (name, id, fromLoc) => { /* ...same (Grid)... */
         <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-4">Request Transfer</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
-window.selectDest = (el, id) => {
+window.selectDest = (el, id) => { /* same */
     document.querySelectorAll('.dest-card').forEach(c => {
         c.classList.remove('bg-slate-900', 'border-slate-900', 'text-white');
         c.querySelector('span').classList.remove('text-white'); 
@@ -293,7 +318,7 @@ window.selectDest = (el, id) => {
     el.querySelectorAll('span')[1].classList.add('text-slate-300');
     selectedDestinationId = id;
 };
-window.inviteModal = async () => { /* ...same... */
+window.inviteModal = async () => { /* same */
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3>
@@ -303,7 +328,7 @@ window.inviteModal = async () => { /* ...same... */
         <button onclick="window.execInvite()" class="btn-primary mt-6">Send Invitation</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
-window.addStoreModal=()=>{ /* ...same... */
+window.addStoreModal=()=>{ /* same */
     document.getElementById('modal-content').innerHTML=`
     <h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3>
     <div class="input-group"><label class="input-label">Name</label><input id="nN" class="input-field"></div>
@@ -311,7 +336,7 @@ window.addStoreModal=()=>{ /* ...same... */
     <button onclick="window.execAddStore()" class="btn-primary mt-6">Create</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
-
+// --- EXEC FUNCTIONS ---
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); const { error } = await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: profile.organization_id }); if(error) throw error; await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Updated Successfully", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
