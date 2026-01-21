@@ -3,11 +3,11 @@ import { getInventory, createLocation, processBarSale, getPendingApprovals, resp
 import { supabase } from './supabase.js';
 
 let profile = null; let cart = []; let currentLogs = [];
-let selectedDestinationId = null;
+let selectedDestinationId = null; // Global variable for Grid Selection
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
-// --- ENGLISH NOTIFICATIONS ONLY ---
+// --- NOTIFICATIONS (ENGLISH ONLY) ---
 window.showNotification = (message, type = 'success') => {
     const existing = document.getElementById('notif-toast');
     if(existing) existing.remove();
@@ -22,6 +22,7 @@ window.showNotification = (message, type = 'success') => {
 
 // --- INITIALIZATION ---
 window.onload = async () => {
+    // Inject CSS to force overflow visible (Safety for all modals)
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
@@ -31,6 +32,7 @@ window.onload = async () => {
     try {
         await supabase.rpc('claim_my_invite', { email_to_check: session.user.email, user_id_to_link: session.user.id });
         
+        // Fetch Profile with Retry Logic
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         if (!prof) {
             await new Promise(r => setTimeout(r, 1000));
@@ -44,24 +46,28 @@ window.onload = async () => {
         // CHECK NAME - IF INVALID, SHOW PREMIUM MODAL
         const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
         const currentName = profile.full_name ? profile.full_name.trim() : "";
+        
         if (currentName.length < 3 || forbiddenNames.some(n => currentName.toLowerCase().includes(n.toLowerCase()))) {
-            // Show the Premium Modal
-            document.getElementById('name-modal').style.display = 'flex';
+            // Show the Premium Modal (Cannot be closed)
+            const nameModal = document.getElementById('name-modal');
+            if(nameModal) nameModal.style.display = 'flex';
         } else {
-            // Update UI Name
+            // Update UI Name immediately
             const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
             if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
         }
         
         window.logoutAction = logout;
         applyStrictPermissions(profile.role);
+        
+        // Determine default view
         const defaultView = (profile.role === 'barman') ? 'bar' : 'inventory';
         router(defaultView);
         
     } catch (e) { console.error(e); }
 };
 
-// --- SAVE NAME FUNCTION (PREMIUM MODAL ACTION) ---
+// --- SAVE NAME FUNCTION (Triggered by Premium Modal) ---
 window.saveName = async () => {
     const nameInput = document.getElementById('userNameInput').value;
     if (!nameInput || nameInput.length < 3) {
@@ -70,7 +76,7 @@ window.saveName = async () => {
 
     const { error } = await supabase.from('profiles').update({ full_name: nameInput }).eq('id', profile.id);
     if (error) {
-        window.showNotification("Error saving name. Try again.", "error");
+        window.showNotification("Error saving name. Please try again.", "error");
     } else {
         profile.full_name = nameInput;
         document.getElementById('name-modal').style.display = 'none';
@@ -85,12 +91,15 @@ window.saveName = async () => {
 function applyStrictPermissions(role) {
     const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
     const show = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'flex'; });
+    
     show(['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
+
     if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
     else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
     else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
 }
 
+// --- ROUTER ---
 window.router = async (view) => {
     if (profile.role === 'barman' && view !== 'bar') { window.showNotification("Access Denied: POS Only", "error"); return; }
     if (profile.role === 'storekeeper' && ['approvals', 'settings', 'staff'].includes(view)) { window.showNotification("Restricted Area", "error"); return; }
@@ -109,28 +118,103 @@ window.router = async (view) => {
         else if (view === 'reports') await renderReports(app);
         else if (view === 'staff') await renderStaff(app);
         else if (view === 'settings') await renderSettings(app);
-    } catch (err) { console.error(err); }
+    } catch (err) { 
+        console.error(err);
+        window.showNotification("Error loading view", "error");
+    }
 };
 
 // --- MODULES ---
+
 async function renderInventory(c) {
     const { data: catalog } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const stock = await getInventory(profile.organization_id);
+    
+    // Filter logic
     const filteredStock = (profile.role === 'manager' || profile.role === 'finance') ? stock : stock.filter(x => x.location_id === profile.assigned_location_id);
     const showAdminActions = profile.role === 'manager';
-    const stockRows = filteredStock.map(i => `<tr class="transition hover:bg-slate-50 border-b border-slate-100 last:border-0"><td class="font-bold text-gray-800 uppercase py-3 pl-4">${i.products?.name}</td><td class="text-xs font-bold text-gray-500 uppercase tracking-widest">${i.locations?.name}</td><td class="font-mono font-bold text-gray-900 text-lg">${i.quantity}</td><td class="text-right pr-4">${profile.role !== 'barman' ? `<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-100 transition shadow-sm">MOVE</button>` : ''}</td></tr>`).join('');
-    c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8"><div><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1><p class="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">${profile.role === 'manager' ? 'All Locations' : 'My Store'}</p></div><div class="flex gap-3">${showAdminActions ? `<button onclick="window.addProductModal()" class="btn-primary bg-white text-slate-900 border border-slate-200 hover:bg-slate-50 shadow-sm">Register Item</button><button onclick="window.addStockModal()" class="btn-primary shadow-lg shadow-slate-900/20">Receive Stock</button>` : ''}</div></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Location</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th><th class="text-right pr-4 text-xs font-bold text-slate-400 uppercase">Action</th></tr></thead><tbody>${stockRows.length ? stockRows : '<tr><td colspan="4" class="text-center text-xs text-gray-400 py-12">No stock available.</td></tr>'}</tbody></table></div></div>`;
+
+    const stockRows = filteredStock.map(i => `
+        <tr class="transition hover:bg-slate-50 border-b border-slate-100 last:border-0">
+            <td class="font-bold text-gray-800 uppercase py-3 pl-4">${i.products?.name}</td>
+            <td class="text-xs font-bold text-gray-500 uppercase tracking-widest">${i.locations?.name}</td>
+            <td class="font-mono font-bold text-gray-900 text-lg">${i.quantity}</td>
+            <td class="text-right pr-4">
+                ${profile.role !== 'barman' ? 
+                    `<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-100 transition shadow-sm uppercase">MOVE</button>` 
+                    : '<span class="text-gray-300 text-xs">-</span>'}
+            </td>
+        </tr>`).join('');
+
+    c.innerHTML = `
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+            <div>
+                <h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>
+                <p class="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">${profile.role === 'manager' ? 'All Locations' : 'My Store'}</p>
+            </div>
+            <div class="flex gap-3">
+                ${showAdminActions ? `<button onclick="window.addProductModal()" class="btn-primary bg-white text-slate-900 border border-slate-200 hover:bg-slate-50 shadow-sm">Register Item</button><button onclick="window.addStockModal()" class="btn-primary shadow-lg shadow-slate-900/20">Receive Stock</button>` : ''}
+            </div>
+        </div>
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left">
+                    <thead class="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                            <th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Item</th>
+                            <th class="text-xs font-bold text-slate-400 uppercase">Location</th>
+                            <th class="text-xs font-bold text-slate-400 uppercase">Qty</th>
+                            <th class="text-right pr-4 text-xs font-bold text-slate-400 uppercase">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${stockRows.length ? stockRows : '<tr><td colspan="4" class="text-center text-xs text-gray-400 py-12">No stock available.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
 }
 
 async function renderBar(c) {
     try {
-        if (!profile.assigned_location_id) { c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">Configuration Error</h3><p>You are not assigned to any Bar Location.</p></div>`; return; }
+        if (!profile.assigned_location_id) { 
+            c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">Configuration Error</h3><p>You are not assigned to any Bar Location.</p></div>`; 
+            return; 
+        }
         const inv = await getInventory(profile.organization_id);
         const items = inv.filter(x => x.location_id === profile.assigned_location_id);
-        const itemCards = items.map(x => `<div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border p-6 rounded-2xl cursor-pointer hover:border-slate-900 transition shadow-sm group hover:shadow-lg hover:-translate-y-1"><h4 class="font-bold text-xs uppercase mb-3 text-slate-800 group-hover:text-slate-900">${x.products.name}</h4><div class="flex justify-between items-center"><span class="font-bold font-mono text-sm">$${x.products.selling_price}</span><span class="text-[10px] text-slate-400 font-bold uppercase bg-slate-50 px-2 py-1 rounded">Qty: ${x.quantity}</span></div></div>`).join('');
-        c.innerHTML = `<div class="flex flex-col lg:flex-row h-full gap-10"><div class="flex-1 overflow-y-auto"><h1 class="text-3xl font-bold uppercase mb-8 text-slate-900">POS Terminal</h1><div class="grid grid-cols-2 md:grid-cols-3 gap-5">${items.length ? itemCards : '<div class="col-span-3 text-center py-10 text-slate-400 font-bold text-xs uppercase">No stock assigned to this Bar.</div>'}</div></div><div class="w-full lg:w-96 bg-white border border-slate-200 rounded-3xl p-8 shadow-xl h-fit sticky top-0"><h3 class="font-bold uppercase mb-6 text-sm tracking-widest text-slate-400">Current Ticket</h3><div id="cart-list" class="space-y-4 mb-8 min-h-[150px]"></div><div class="border-t border-slate-100 pt-6"><div class="flex justify-between font-bold mb-6 text-xl text-slate-900"><span>Total</span><span id="cart-total">$0.00</span></div><button onclick="window.checkout()" class="btn-primary w-full py-4 text-sm shadow-xl">Complete Sale</button></div></div></div>`;
+        
+        const itemCards = items.map(x => `
+            <div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" class="bg-white border p-6 rounded-2xl cursor-pointer hover:border-slate-900 transition shadow-sm group hover:shadow-lg hover:-translate-y-1">
+                <h4 class="font-bold text-xs uppercase mb-3 text-slate-800 group-hover:text-slate-900">${x.products.name}</h4>
+                <div class="flex justify-between items-center">
+                    <span class="font-bold font-mono text-sm">$${x.products.selling_price}</span>
+                    <span class="text-[10px] text-slate-400 font-bold uppercase bg-slate-50 px-2 py-1 rounded">Qty: ${x.quantity}</span>
+                </div>
+            </div>`).join('');
+
+        c.innerHTML = `
+            <div class="flex flex-col lg:flex-row h-full gap-10">
+                <div class="flex-1 overflow-y-auto">
+                    <h1 class="text-3xl font-bold uppercase mb-8 text-slate-900">POS Terminal</h1>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-5">
+                        ${items.length ? itemCards : '<div class="col-span-3 text-center py-10 text-slate-400 font-bold text-xs uppercase">No stock assigned to this Bar.</div>'}
+                    </div>
+                </div>
+                <div class="w-full lg:w-96 bg-white border border-slate-200 rounded-3xl p-8 shadow-xl h-fit sticky top-0">
+                    <h3 class="font-bold uppercase mb-6 text-sm tracking-widest text-slate-400">Current Ticket</h3>
+                    <div id="cart-list" class="space-y-4 mb-8 min-h-[150px]"></div>
+                    <div class="border-t border-slate-100 pt-6">
+                        <div class="flex justify-between font-bold mb-6 text-xl text-slate-900"><span>Total</span><span id="cart-total">$0.00</span></div>
+                        <button onclick="window.checkout()" class="btn-primary w-full py-4 text-sm shadow-xl">Complete Sale</button>
+                    </div>
+                </div>
+            </div>`;
         window.renderCart();
-    } catch (e) { console.error("Bar Error:", e); c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">System Error</h3><p>Could not load POS. Please contact admin.</p></div>`; }
+    } catch (e) { 
+        console.error("Bar Error:", e); 
+        c.innerHTML = `<div class="p-10 text-center"><h3 class="text-red-500 font-bold">System Error</h3><p>Could not load POS. Please contact admin.</p></div>`; 
+    }
 }
 
 async function renderReports(c) {
@@ -140,16 +224,33 @@ async function renderReports(c) {
         const showFinancials = (profile.role === 'manager' || profile.role === 'finance');
         const totalSales = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
         const totalProfit = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
+
         c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1><div class="flex gap-2">${showFinancials ? `<button onclick="window.exportCSV()" class="btn-primary bg-green-700 hover:bg-green-800 text-xs px-4 flex gap-2 items-center">EXPORT CSV</button>` : ''}</div></div>${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">$${totalSales.toLocaleString()}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">$${totalProfit.toLocaleString()}</p></div></div>` : ''}<div class="flex flex-wrap gap-2 mb-6"><button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button><button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button><button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button><button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Time & Date</th><th class="text-xs font-bold text-slate-400 uppercase">User Identity</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
         window.filterLogs('all');
     } catch(e) { c.innerHTML = '<p class="text-red-500">Error.</p>'; }
 }
+
 window.filterLogs=(t)=>{let f=currentLogs;if(t==='sale')f=currentLogs.filter(l=>l.type==='sale');else if(t==='transfer')f=currentLogs.filter(l=>['pending_transfer','transfer_completed','receive'].includes(l.type));else if(t==='consumption')f=currentLogs.filter(l=>l.to_location_id&&l.locations?.type==='department');const b=document.getElementById('logsBody');if(!f.length){b.innerHTML='<tr><td colspan="6" class="text-center text-xs text-gray-400 py-12">No records found.</td></tr>';return;}b.innerHTML=f.map(l=>{const d=new Date(l.created_at);let a=l.type.replace('_',' ').toUpperCase(),c='bg-blue-50 text-blue-600',det=`${l.from_loc?.name||'-'} ➜ ${l.locations?.name||'-'}`;if(l.type==='sale'){c='bg-green-50 text-green-600';det='POS Sale';}if(l.type==='receive'){c='bg-slate-100 text-slate-600';det='Supplier Entry';}if(l.locations?.type==='department'){a='CONSUMPTION';c='bg-orange-50 text-orange-600';}const u=l.profiles?.full_name||'System',r=l.profiles?.role||'Unknown';return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="py-3 pl-4"><div class="font-bold text-slate-700 text-xs">${d.toLocaleDateString()}</div><div class="text-[10px] text-slate-400 font-mono">${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div></td><td><div class="flex items-center gap-2"><div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500">${u.charAt(0)}</div><div><div class="font-bold text-slate-900 text-xs">${u}</div><div class="text-[9px] font-bold uppercase tracking-wider text-slate-500 bg-slate-50 px-1 rounded inline-block">${r}</div></div></div></td><td class="font-bold uppercase text-xs text-slate-700">${l.products?.name}</td><td><span class="font-bold uppercase ${c} text-[9px] tracking-widest px-2 py-1 rounded-full">${a}</span></td><td class="text-xs uppercase text-gray-500 font-medium">${det}</td><td class="font-mono font-bold text-slate-900">${l.quantity}</td></tr>`}).join('');}
 window.exportCSV=()=>{let r=[["Date","Time","User","Role","Item","Action","Details","Qty"]],t=document.getElementById("logsBody");if(!t)return;t.querySelectorAll("tr").forEach(tr=>{let d=[];tr.querySelectorAll("td").forEach(td=>d.push(td.innerText.replace('\n',' ')));if(d.length)r.push([d[0],d[0],d[1],d[1],d[2],d[3],d[4],d[5]])});let c="data:text/csv;charset=utf-8,"+r.map(e=>e.join(",")).join("\n"),l=document.createElement("a");l.setAttribute("href",encodeURI(c));l.setAttribute("download",`Report.csv`);document.body.appendChild(l);l.click();}
-async function renderApprovals(c){if(profile.role==='storekeeper')return;const q=await getPendingApprovals(profile.organization_id);const r=q.map(x=>`<tr><td class="font-bold text-sm uppercase py-3 pl-4">${x.products?.name}</td><td class="font-bold text-blue-600 font-mono">${x.quantity}</td><td class="text-xs text-slate-500 uppercase tracking-wide">To: ${x.to_loc?.name}</td><td class="text-right pr-4"><button onclick="window.approve('${x.id}','approved')" class="text-[10px] font-bold bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-700 shadow-sm">APPROVE</button></td></tr>`).join('');c.innerHTML=`<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Approvals</h1><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${r.length?r:'<tr><td colspan="4" class="text-center text-xs text-slate-400 py-12">No pending approvals.</td></tr>'}</tbody></table></div></div>`;}
+
+async function renderApprovals(c){
+    if(profile.role==='storekeeper') return;
+    const q=await getPendingApprovals(profile.organization_id);
+    const r=q.map(x=>`<tr><td class="font-bold text-sm uppercase py-3 pl-4">${x.products?.name}</td><td class="font-bold text-blue-600 font-mono">${x.quantity}</td><td class="text-xs text-slate-500 uppercase tracking-wide">To: ${x.to_loc?.name}</td><td class="text-right pr-4"><button onclick="window.approve('${x.id}','approved')" class="text-[10px] font-bold bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-700 shadow-sm">APPROVE</button></td></tr>`).join('');
+    c.innerHTML=`<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Approvals</h1><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${r.length?r:'<tr><td colspan="4" class="text-center text-xs text-slate-400 py-12">No pending approvals.</td></tr>'}</tbody></table></div></div>`;
+}
 window.approve=async(id,s)=>{if(confirm('Authorize?'))try{await respondToApproval(id,s,profile.id);window.showNotification("Authorized","success");router('approvals');}catch(e){window.showNotification(e.message,"error");}}
-async function renderStaff(c){const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;}
-async function renderSettings(c){const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;}
+
+async function renderStaff(c){
+    const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);
+    const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');
+    c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+
+async function renderSettings(c){
+    const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);
+    c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;
+}
 
 // --- MODALS ---
 
@@ -163,7 +264,6 @@ window.addProductModal = () => {
     document.getElementById('modal').style.display = 'flex'; 
 };
 
-// 2. RECEIVE STOCK
 window.addStockModal = async () => {
     if(profile.role !== 'manager') return;
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
@@ -177,12 +277,13 @@ window.addStockModal = async () => {
     document.getElementById('modal').style.display = 'flex';
 };
 
-// 3. MOVE STOCK (GRID SELECTOR)
+// 3. MOVE STOCK (GRID SELECTOR - NEW DESIGN)
 window.issueModal = async (name, id, fromLoc) => { 
-    selectedDestinationId = null;
+    selectedDestinationId = null; // Reset selection
     let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
     if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
 
+    // Create Grid HTML
     const gridHTML = locs.map(l => `
         <div onclick="window.selectDest(this, '${l.id}')" 
              class="dest-card border border-slate-200 p-4 rounded-xl cursor-pointer hover:border-slate-900 hover:bg-slate-50 transition flex flex-col items-center justify-center gap-1 text-center">
@@ -238,7 +339,7 @@ window.addStoreModal=()=>{
     document.getElementById('modal').style.display = 'flex'; 
 };
 
-// --- EXEC FUNCTIONS (UPDATED TO ENGLISH + RPC) ---
+// --- EXEC FUNCTIONS ---
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 
 window.execAddStock = async () => { 
@@ -269,7 +370,7 @@ window.execIssue = async (pId, fId) => {
         document.getElementById('modal').style.display = 'none'; 
         window.showNotification("Transfer Requested", "success"); 
         router('inventory'); 
-    } catch(e){ window.showNotification(e.message, "error"); } // Message will be in English from services.js or generic error
+    } catch(e){ window.showNotification(e.message, "error"); }
 };
 
 window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
