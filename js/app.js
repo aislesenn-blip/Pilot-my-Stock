@@ -5,6 +5,19 @@ import { supabase } from './supabase.js';
 let profile = null; let cart = []; let currentLogs = [];
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
+// --- 0. PREMIUM NOTIFICATION SYSTEM (No more alerts) ---
+window.showNotification = (message, type = 'success') => {
+    const div = document.createElement('div');
+    const color = type === 'success' ? 'bg-slate-900' : 'bg-red-600';
+    div.className = `fixed top-5 right-5 ${color} text-white px-6 py-4 rounded-xl shadow-2xl z-[100] flex items-center gap-3 animate-fade-in transition-all transform duration-300`;
+    div.innerHTML = `
+        <div class="flex-1 text-sm font-bold tracking-wide uppercase">${message}</div>
+        <button onclick="this.parentElement.remove()" class="text-white/50 hover:text-white">✕</button>
+    `;
+    document.body.appendChild(div);
+    setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 300); }, 4000);
+};
+
 // --- 1. INITIALIZATION ---
 window.onload = async () => {
     const session = await getSession();
@@ -16,17 +29,17 @@ window.onload = async () => {
         
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
-        // --- FIX 1: KILA MTU AOMBWE JINA (Sio Manager tu) ---
-        // Kama jina ni tupu, AU jina linafanana na Role (mfano kuitwa 'Storekeeper'), tunamulazimisha kuweka jina
+        // FORCE NAME ENTRY (For Everyone)
+        // If name is null, empty, or generic Role name, force update
         const genericNames = ['Manager', 'Storekeeper', 'Barman', 'Finance'];
         if (!profile.full_name || profile.full_name.length < 3 || genericNames.includes(profile.full_name)) {
             let newName = null;
             while (!newName || newName.length < 3) {
-                newName = prompt(`Welcome ${profile.role.toUpperCase()}! Please enter your Full Name (e.g. Juma Hamisi) to continue:`);
+                newName = prompt(`Access Requirement:\nPlease enter your LEGAL FULL NAME to proceed:`);
             }
-            // Update Database
             await supabase.from('profiles').update({ full_name: newName }).eq('id', profile.id);
-            profile.full_name = newName; // Update local variable
+            profile.full_name = newName;
+            window.showNotification("Profile updated successfully.", "success");
         }
         
         window.logoutAction = logout;
@@ -35,7 +48,6 @@ window.onload = async () => {
         document.getElementById('mobile-menu-btn')?.addEventListener('click', () => document.getElementById('sidebar').classList.remove('-translate-x-full'));
         document.getElementById('close-sidebar')?.addEventListener('click', () => document.getElementById('sidebar').classList.add('-translate-x-full'));
         
-        // Update Sidebar Name
         const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
         if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
 
@@ -60,8 +72,8 @@ function applyStrictPermissions(role) {
 
 // --- 3. ROUTER ---
 window.router = async (view) => {
-    if (profile.role === 'barman' && view !== 'bar') return alert("Access Denied: POS Only.");
-    if (profile.role === 'storekeeper' && ['approvals', 'settings', 'staff'].includes(view)) return alert("Access Denied.");
+    if (profile.role === 'barman' && view !== 'bar') { window.showNotification("Access Denied: POS Terminal Only", "error"); return; }
+    if (profile.role === 'storekeeper' && ['approvals', 'settings', 'staff'].includes(view)) { window.showNotification("Access Restricted", "error"); return; }
     
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
@@ -80,7 +92,6 @@ window.router = async (view) => {
 
 // --- 4. MODULES ---
 
-// INVENTORY
 async function renderInventory(c) {
     try {
         const { data: catalog } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
@@ -105,12 +116,11 @@ async function renderInventory(c) {
             </div>
             <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left">
                 <thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Location</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th><th class="text-right pr-4 text-xs font-bold text-slate-400 uppercase">Action</th></tr></thead>
-                <tbody>${stockRows.length ? stockRows : '<tr><td colspan="4" class="text-center text-xs text-gray-400 py-12">No stock found.</td></tr>'}</tbody>
+                <tbody>${stockRows.length ? stockRows : '<tr><td colspan="4" class="text-center text-xs text-gray-400 py-12">No stock available.</td></tr>'}</tbody>
             </table></div></div>`;
     } catch(e) { console.error(e); }
 }
 
-// REPORTS
 async function renderReports(c) {
     try {
         const { data: logs } = await supabase.from('transactions').select('*, products(name), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name, role)').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }).limit(100);
@@ -153,7 +163,6 @@ async function renderReports(c) {
     } catch(e) { c.innerHTML = '<p class="text-red-500">Error.</p>'; }
 }
 
-// FILTER LOGIC
 window.filterLogs = (type) => {
     let filtered = currentLogs;
     if (type === 'sale') filtered = currentLogs.filter(l => l.type === 'sale');
@@ -166,7 +175,7 @@ window.filterLogs = (type) => {
     tbody.innerHTML = filtered.map(l => {
         const d = new Date(l.created_at);
         const dateStr = d.toLocaleDateString();
-        const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}); 
+        const timeStr = d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         
         let action = l.type.replace('_', ' ').toUpperCase();
         let color = 'bg-blue-50 text-blue-600';
@@ -206,7 +215,6 @@ window.exportCSV = () => {
     let rows = [["Date", "Time", "User Name", "User Role", "Item", "Action", "Details", "Quantity"]];
     const table = document.getElementById("logsBody");
     if(!table) return;
-    
     table.querySelectorAll("tr").forEach(tr => {
         let rowData = [];
         let cols = tr.querySelectorAll("td");
@@ -221,11 +229,10 @@ window.exportCSV = () => {
             rows.push(rowData);
         }
     });
-
     let csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
     let link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `Baobab_Audit_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `Audit_Report_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
 };
@@ -236,7 +243,13 @@ async function renderApprovals(c) {
     const rows = q.map(x => `<tr><td class="font-bold text-sm uppercase py-3 pl-4">${x.products?.name}</td><td class="font-bold text-blue-600 font-mono">${x.quantity}</td><td class="text-xs text-slate-500 uppercase tracking-wide">To: ${x.to_loc?.name}</td><td class="text-right pr-4"><button onclick="window.approve('${x.id}','approved')" class="text-[10px] font-bold bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-700 shadow-sm">APPROVE</button></td></tr>`).join('');
     c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Approvals</h1><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${rows.length?rows:'<tr><td colspan="4" class="text-center text-xs text-slate-400 py-12">No pending approvals.</td></tr>'}</tbody></table></div></div>`;
 }
-window.approve=async(id,s)=>{ if(confirm('Authorize this transfer?')) try { await respondToApproval(id,s,profile.id); router('approvals'); } catch(e){} }
+window.approve=async(id,s)=>{ 
+    if(confirm('Authorize this transfer?')) try { 
+        await respondToApproval(id,s,profile.id); 
+        window.showNotification("Authorization Successful!", "success");
+        router('approvals'); 
+    } catch(e){ window.showNotification("Error: " + e.message, "error"); } 
+}
 
 async function renderStaff(c) {
     const { data: active } = await supabase.from('profiles').select('*').eq('organization_id', profile.organization_id);
@@ -256,9 +269,7 @@ async function renderBar(c) {
     window.renderCart();
 }
 
-// --- 5. MODALS (FIXED: Z-INDEX & STACKING) ---
-// Kanuni: Element ya juu (Select) inapewa Z-index kubwa (z-50)
-// Element ya chini (Input) inapewa Z-index ndogo (z-10) ili isizibe ya juu ikifunguka.
+// --- 5. MODALS (FIXED: Z-INDEX 50, 40, 10 SYSTEM) ---
 
 window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
@@ -354,13 +365,38 @@ window.inviteModal = async () => {
 
 window.addStoreModal=()=>{ document.getElementById('modal-content').innerHTML=`<h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3><div class="input-group relative z-[50]"><label class="input-label">Name</label><input id="nN" class="input-field"></div><div class="input-group relative z-[40]"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div><button onclick="window.execAddStore()" class="btn-primary mt-4">Create</button>`; document.getElementById('modal').style.display = 'flex'; };
 
-// --- EXEC FUNCTIONS ---
-window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; router('inventory'); } catch(e) { alert(e.message); } };
-window.execAddStock = async () => { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; await supabase.from('inventory').insert({ product_id: pid, location_id: lid, quantity: qty, organization_id: profile.organization_id }); await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; router('inventory'); };
-window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return alert("Invalid"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; router('staff'); };
-window.execIssue = async (pId, fId) => { try { await transferStock(pId, fId, document.getElementById('tTo').value, document.getElementById('tQty').value, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; alert("Request Sent."); router('inventory'); } catch(e){alert(e.message);}};
+// --- EXEC FUNCTIONS (With Premium Notifications) ---
+window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
+
+window.execAddStock = async () => { 
+    const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; 
+    await supabase.from('inventory').insert({ product_id: pid, location_id: lid, quantity: qty, organization_id: profile.organization_id }); 
+    await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); 
+    document.getElementById('modal').style.display = 'none'; 
+    window.showNotification("Stock Received Successfully", "success");
+    router('inventory'); 
+};
+
+window.execInvite = async () => { 
+    const email = document.getElementById('iE').value; 
+    if(!email.includes('@')) return window.showNotification("Invalid Email Address", "error"); 
+    await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); 
+    document.getElementById('modal').style.display = 'none'; 
+    window.showNotification("Invitation Sent", "success");
+    router('staff'); 
+};
+
+window.execIssue = async (pId, fId) => { 
+    try { 
+        await transferStock(pId, fId, document.getElementById('tTo').value, document.getElementById('tQty').value, profile.id, profile.organization_id); 
+        document.getElementById('modal').style.display = 'none'; 
+        window.showNotification("Transfer Requested", "success"); 
+        router('inventory'); 
+    } catch(e){ window.showNotification(e.message, "error"); }
+};
+
 window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
 window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart();}
 window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText='$0.00'; return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText='$'+sum.toFixed(2); }
 window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
-window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, profile.assigned_location_id, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); alert('Sale Recorded.'); cart=[]; window.renderCart(); router('bar');}catch(e){alert(e.message);}}
+window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, profile.assigned_location_id, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
