@@ -18,18 +18,14 @@ window.showNotification = (message, type = 'success') => {
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 300); }, 3000);
 };
 
-// --- INITIALIZATION (FIXED: PROFILE RETRY LOGIC) ---
+// --- INITIALIZATION ---
 window.onload = async () => {
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
     try {
-        // 1. Link Invite
         await supabase.rpc('claim_my_invite', { email_to_check: session.user.email, user_id_to_link: session.user.id });
         
-        // 2. Fetch Profile (With Retry Logic - Dawa ya Staff kukosa Profile)
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        
-        // Kama profile haipo, subiri sekunde 1 na jaribu tena (Supabase inaweza kuchelewa)
         if (!prof) {
             await new Promise(r => setTimeout(r, 1500)); 
             let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
@@ -37,32 +33,22 @@ window.onload = async () => {
         }
 
         profile = prof;
-        
-        // Kama bado haipo, huyu mtu ana shida, mrudishe setup
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
-        // 3. FORCE NAME ENTRY (SECURITY CHECKPOINT)
+        // CHECK NAME
         const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
         const currentName = profile.full_name ? profile.full_name.trim() : "";
         
-        // Hapa tunamlazimisha yeyote (Hata Barman) kuweka jina
         if (currentName.length < 3 || forbiddenNames.some(n => currentName.toLowerCase().includes(n.toLowerCase()))) {
             let newName = null;
             while (!newName || newName.length < 3) {
                 newName = prompt(`⚠️ REQUIRED: Please enter your LEGAL FULL NAME to activate your account:`);
             }
-            
             const { error: updateErr } = await supabase.from('profiles').update({ full_name: newName }).eq('id', profile.id);
-            if (!updateErr) {
-                profile.full_name = newName;
-                window.showNotification("Identity Verified. Welcome!", "success");
-            } else {
-                alert("Database Error: Run the SQL Script provided!"); // Hapa ndio utajua kama SQL haikupigwa
-            }
+            if (!updateErr) profile.full_name = newName;
         }
         
         window.logoutAction = logout;
-        
         const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
         if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
 
@@ -77,9 +63,7 @@ window.onload = async () => {
 function applyStrictPermissions(role) {
     const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
     const show = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'flex'; });
-
     show(['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
-
     if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
     else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
     else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
@@ -89,14 +73,11 @@ function applyStrictPermissions(role) {
 window.router = async (view) => {
     if (profile.role === 'barman' && view !== 'bar') { window.showNotification("Access Denied: POS Only", "error"); return; }
     if (profile.role === 'storekeeper' && ['approvals', 'settings', 'staff'].includes(view)) { window.showNotification("Restricted Area", "error"); return; }
-    
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
-    
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active'));
     document.getElementById(`nav-${view}`)?.classList.add('nav-active');
     if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('-translate-x-full');
-
     try {
         if (view === 'inventory') await renderInventory(app);
         else if (view === 'bar') await renderBar(app);
@@ -108,131 +89,14 @@ window.router = async (view) => {
 };
 
 // --- MODULES ---
-
 async function renderInventory(c) {
     const { data: catalog } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const stock = await getInventory(profile.organization_id);
     const filteredStock = (profile.role === 'manager' || profile.role === 'finance') ? stock : stock.filter(x => x.location_id === profile.assigned_location_id);
     const showAdminActions = profile.role === 'manager';
-
-    const stockRows = filteredStock.map(i => `
-        <tr class="transition hover:bg-slate-50 border-b border-slate-100 last:border-0">
-            <td class="font-bold text-gray-800 uppercase py-3 pl-4">${i.products?.name}</td>
-            <td class="text-xs font-bold text-gray-500 uppercase tracking-widest">${i.locations?.name}</td>
-            <td class="font-mono font-bold text-gray-900 text-lg">${i.quantity}</td>
-            <td class="text-right pr-4">
-                ${profile.role !== 'barman' ? `<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-100 transition shadow-sm">MOVE</button>` : ''}
-            </td>
-        </tr>`).join('');
-
-    c.innerHTML = `
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
-            <div><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1><p class="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">${profile.role === 'manager' ? 'All Locations' : 'My Store'}</p></div>
-            <div class="flex gap-3">${showAdminActions ? `<button onclick="window.addProductModal()" class="btn-primary bg-white text-slate-900 border border-slate-200 hover:bg-slate-50 shadow-sm">Register Item</button><button onclick="window.addStockModal()" class="btn-primary shadow-lg shadow-slate-900/20">Receive Stock</button>` : ''}</div>
-        </div>
-        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left">
-            <thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Location</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th><th class="text-right pr-4 text-xs font-bold text-slate-400 uppercase">Action</th></tr></thead>
-            <tbody>${stockRows.length ? stockRows : '<tr><td colspan="4" class="text-center text-xs text-gray-400 py-12">No stock available.</td></tr>'}</tbody>
-        </table></div></div>`;
+    const stockRows = filteredStock.map(i => `<tr class="transition hover:bg-slate-50 border-b border-slate-100 last:border-0"><td class="font-bold text-gray-800 uppercase py-3 pl-4">${i.products?.name}</td><td class="text-xs font-bold text-gray-500 uppercase tracking-widest">${i.locations?.name}</td><td class="font-mono font-bold text-gray-900 text-lg">${i.quantity}</td><td class="text-right pr-4">${profile.role !== 'barman' ? `<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-100 transition shadow-sm">MOVE</button>` : ''}</td></tr>`).join('');
+    c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8"><div><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1><p class="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">${profile.role === 'manager' ? 'All Locations' : 'My Store'}</p></div><div class="flex gap-3">${showAdminActions ? `<button onclick="window.addProductModal()" class="btn-primary bg-white text-slate-900 border border-slate-200 hover:bg-slate-50 shadow-sm">Register Item</button><button onclick="window.addStockModal()" class="btn-primary shadow-lg shadow-slate-900/20">Receive Stock</button>` : ''}</div></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Location</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th><th class="text-right pr-4 text-xs font-bold text-slate-400 uppercase">Action</th></tr></thead><tbody>${stockRows.length ? stockRows : '<tr><td colspan="4" class="text-center text-xs text-gray-400 py-12">No stock available.</td></tr>'}</tbody></table></div></div>`;
 }
-
-// --- FIXED MODALS (Z-INDEX SOLVED) ---
-
-// 1. RECEIVE STOCK (Hii inafanya kazi, tumeiacha kama ilivyo)
-window.addStockModal = async () => {
-    if(profile.role !== 'manager') return;
-    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).order('name');
-    document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-8 uppercase text-center">Receive from Supplier</h3>
-        <div class="input-group" style="position: relative; z-index: 50;">
-            <label class="input-label">Item</label>
-            <select id="sP" class="input-field cursor-pointer">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select>
-        </div>
-        <div class="input-group" style="position: relative; z-index: 40;">
-            <label class="input-label">Store</label>
-            <select id="sL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select>
-        </div>
-        <div class="input-group" style="position: relative; z-index: 10;">
-            <label class="input-label">Qty</label>
-            <input id="sQ" type="number" class="input-field">
-        </div>
-        <button onclick="window.execAddStock()" class="btn-primary mt-6">Confirm Entry</button>`;
-    document.getElementById('modal').style.display = 'flex';
-};
-
-// 2. MOVE STOCK (HAPA NDIPO PALIKUWA NA SHIDA - FIXED!)
-window.issueModal = async (name, id, fromLoc) => { 
-    let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
-    if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
-
-    document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-8 uppercase text-center">Move Stock</h3>
-        
-        <div class="input-group" style="position: relative; z-index: 10;">
-            <label class="input-label">Item</label>
-            <input value="${name}" disabled class="input-field bg-slate-50 uppercase text-gray-500">
-        </div>
-
-        <div class="input-group" style="position: relative; z-index: 50;">
-            <label class="input-label">To Destination</label>
-            <select id="tTo" class="input-field cursor-pointer hover:border-black">
-                ${locs.map(l=>`<option value="${l.id}">${l.name} (${l.type.replace('_',' ')})</option>`).join('')}
-            </select>
-        </div>
-
-        <div class="input-group" style="position: relative; z-index: 5;">
-            <label class="input-label">Quantity</label>
-            <input id="tQty" type="number" class="input-field">
-        </div>
-
-        <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-6">Request Transfer</button>`;
-    document.getElementById('modal').style.display = 'flex';
-};
-
-// 3. INVITE MODAL (Standard Fix)
-window.inviteModal = async () => { 
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
-    document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3>
-        <div class="input-group" style="position: relative; z-index: 50;">
-            <label class="input-label">Email</label>
-            <input id="iE" class="input-field" placeholder="email@company.com">
-        </div>
-        <div class="input-group" style="position: relative; z-index: 40;">
-            <label class="input-label">Role</label>
-            <select id="iR" class="input-field cursor-pointer">
-                <option value="storekeeper">Storekeeper</option>
-                <option value="barman">Barman</option>
-                <option value="finance">Finance</option>
-            </select>
-        </div>
-        <div class="input-group" style="position: relative; z-index: 30;">
-            <label class="input-label">Assign Location</label>
-            <select id="iL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select>
-        </div>
-        <button onclick="window.execInvite()" class="btn-primary mt-6">Send Invitation</button>`; 
-    document.getElementById('modal').style.display = 'flex'; 
-};
-
-window.addProductModal = () => { 
-    if(profile.role !== 'manager') return; 
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3><div class="input-group" style="position: relative; z-index: 100;"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-5 mb-8" style="position: relative; z-index: 50;"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div><button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
-    document.getElementById('modal').style.display = 'flex'; 
-};
-
-// ... (Helpers and Exec Functions below remain unchanged and correct) ...
-window.addStoreModal=()=>{ document.getElementById('modal-content').innerHTML=`<h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3><div class="input-group" style="position: relative; z-index: 20;"><label class="input-label">Name</label><input id="nN" class="input-field"></div><div class="input-group" style="position: relative; z-index: 10;"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div><button onclick="window.execAddStore()" class="btn-primary mt-4">Create</button>`; document.getElementById('modal').style.display = 'flex'; };
-
-window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
-window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); await supabase.from('inventory').insert({ product_id: pid, location_id: lid, quantity: qty, organization_id: profile.organization_id }); await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Received", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
-window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
-window.execIssue = async (pId, fId) => { try { await transferStock(pId, fId, document.getElementById('tTo').value, document.getElementById('tQty').value, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Transfer Requested", "success"); router('inventory'); } catch(e){ window.showNotification(e.message, "error"); }};
-window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
-window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart();}
-window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText='$0.00'; return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText='$'+sum.toFixed(2); }
-window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
-window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, profile.assigned_location_id, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
 
 async function renderBar(c) {
     try {
@@ -262,3 +126,71 @@ async function renderApprovals(c){if(profile.role==='storekeeper')return;const q
 window.approve=async(id,s)=>{if(confirm('Authorize?'))try{await respondToApproval(id,s,profile.id);window.showNotification("Authorized","success");router('approvals');}catch(e){window.showNotification(e.message,"error");}}
 async function renderStaff(c){const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;}
 async function renderSettings(c){const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;}
+
+// --- FIXED MODALS (Stacking Problem Solved) ---
+
+window.addProductModal = () => { 
+    if(profile.role !== 'manager') return; 
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3>
+        <div class="input-group" style="position: relative; z-index: 100;"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
+        <div class="grid grid-cols-2 gap-5 mb-8" style="position: relative; z-index: 50;"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
+        <button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
+    document.getElementById('modal').style.display = 'flex'; 
+};
+
+// 1. RECEIVE STOCK (Hii ilikua inafanya kazi)
+window.addStockModal = async () => {
+    if(profile.role !== 'manager') return;
+    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).order('name');
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-8 uppercase text-center">Receive from Supplier</h3>
+        <div class="input-group" style="position: relative; z-index: 100;"><label class="input-label">Item</label><select id="sP" class="input-field cursor-pointer">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
+        <div class="input-group" style="position: relative; z-index: 80;"><label class="input-label">Store</label><select id="sL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
+        <div class="input-group" style="position: relative; z-index: 10;"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div>
+        <button onclick="window.execAddStock()" class="btn-primary mt-6">Confirm Entry</button>`;
+    document.getElementById('modal').style.display = 'flex';
+};
+
+// 2. MOVE STOCK (HILI NDILO LILIKUSHINDA - FIXED)
+window.issueModal = async (name, id, fromLoc) => { 
+    let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
+    if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
+
+    // Mabadiliko Makubwa Hapa:
+    // Dropdown (Destination) nimeipa Z-Index: 100 (Juu Kabisa)
+    // Input ya chini (Quantity) nimeipa Z-Index: 10 (Chini Kabisa)
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-8 uppercase text-center">Move Stock</h3>
+        <div class="input-group" style="position: relative; z-index: 10;"><label class="input-label">Item</label><input value="${name}" disabled class="input-field bg-slate-50 uppercase text-gray-500"></div>
+        
+        <div class="input-group" style="position: relative; z-index: 100;"><label class="input-label">To Destination</label><select id="tTo" class="input-field cursor-pointer hover:border-black">${locs.map(l=>`<option value="${l.id}">${l.name} (${l.type.replace('_',' ')})</option>`).join('')}</select></div>
+        
+        <div class="input-group" style="position: relative; z-index: 10;"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div>
+        <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-6">Request Transfer</button>`;
+    document.getElementById('modal').style.display = 'flex';
+};
+
+window.inviteModal = async () => { 
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3>
+        <div class="input-group" style="position: relative; z-index: 100;"><label class="input-label">Email</label><input id="iE" class="input-field" placeholder="email@company.com"></div>
+        <div class="input-group" style="position: relative; z-index: 80;"><label class="input-label">Role</label><select id="iR" class="input-field cursor-pointer"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div>
+        <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Assign Location</label><select id="iL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
+        <button onclick="window.execInvite()" class="btn-primary mt-6">Send Invitation</button>`; 
+    document.getElementById('modal').style.display = 'flex'; 
+};
+
+window.addStoreModal=()=>{ document.getElementById('modal-content').innerHTML=`<h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3><div class="input-group" style="position: relative; z-index: 20;"><label class="input-label">Name</label><input id="nN" class="input-field"></div><div class="input-group" style="position: relative; z-index: 10;"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div><button onclick="window.execAddStore()" class="btn-primary mt-4">Create</button>`; document.getElementById('modal').style.display = 'flex'; };
+
+window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
+window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); await supabase.from('inventory').insert({ product_id: pid, location_id: lid, quantity: qty, organization_id: profile.organization_id }); await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Received", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
+window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
+window.execIssue = async (pId, fId) => { try { await transferStock(pId, fId, document.getElementById('tTo').value, document.getElementById('tQty').value, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Transfer Requested", "success"); router('inventory'); } catch(e){ window.showNotification(e.message, "error"); }};
+window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
+window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart();}
+window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText='$0.00'; return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText='$'+sum.toFixed(2); }
+window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
+window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, profile.assigned_location_id, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
