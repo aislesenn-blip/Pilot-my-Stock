@@ -35,7 +35,7 @@ window.onload = async () => {
         profile = prof;
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
-        // FORCE NAME ENTRY
+        // CHECK NAME LOGIC
         const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
         const currentName = profile.full_name ? profile.full_name.trim() : "";
         
@@ -73,14 +73,11 @@ function applyStrictPermissions(role) {
 window.router = async (view) => {
     if (profile.role === 'barman' && view !== 'bar') { window.showNotification("Access Denied: POS Only", "error"); return; }
     if (profile.role === 'storekeeper' && ['approvals', 'settings', 'staff'].includes(view)) { window.showNotification("Restricted Area", "error"); return; }
-    
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
-    
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active'));
     document.getElementById(`nav-${view}`)?.classList.add('nav-active');
     if (window.innerWidth < 768) document.getElementById('sidebar').classList.add('-translate-x-full');
-
     try {
         if (view === 'inventory') await renderInventory(app);
         else if (view === 'bar') await renderBar(app);
@@ -130,20 +127,20 @@ window.approve=async(id,s)=>{if(confirm('Authorize?'))try{await respondToApprova
 async function renderStaff(c){const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id);const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;}
 async function renderSettings(c){const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;}
 
-// --- ALL POPUPS FIXED (STACKING ORDER AUDITED) ---
+// --- ALL POPUPS FIXED (DESCENDING ORDER Z-INDEX) ---
 
-// 1. ADD PRODUCT (No Dropdown - OK)
+// 1. ADD PRODUCT (Name > Group > Button)
 window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3>
         <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
         <div class="grid grid-cols-2 gap-5 mb-8" style="position: relative; z-index: 40;"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
-        <button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
+        <button onclick="window.execAddProduct()" class="btn-primary" style="position: relative; z-index: 10;">Save</button>`;
     document.getElementById('modal').style.display = 'flex'; 
 };
 
-// 2. RECEIVE STOCK (Top Select > Middle Select > Bottom Input - OK)
+// 2. RECEIVE STOCK (Item > Store > Qty)
 window.addStockModal = async () => {
     if(profile.role !== 'manager') return;
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
@@ -153,11 +150,11 @@ window.addStockModal = async () => {
         <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Item</label><select id="sP" class="input-field cursor-pointer">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
         <div class="input-group" style="position: relative; z-index: 40;"><label class="input-label">Store</label><select id="sL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
         <div class="input-group" style="position: relative; z-index: 30;"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div>
-        <button onclick="window.execAddStock()" class="btn-primary mt-6">Confirm Entry</button>`;
+        <button onclick="window.execAddStock()" class="btn-primary mt-6" style="position: relative; z-index: 10;">Confirm Entry</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
-// 3. MOVE STOCK (Input > Dropdown > Input - FIXED)
+// 3. MOVE STOCK (Item > Destination > Qty) - HAPA NDIPO PALIKUWA NA SHIDA KUBWA
 window.issueModal = async (name, id, fromLoc) => { 
     let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
     if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department');
@@ -165,30 +162,39 @@ window.issueModal = async (name, id, fromLoc) => {
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">Move Stock</h3>
         
-        <div class="input-group" style="position: relative; z-index: 40;"><label class="input-label">Item</label><input value="${name}" disabled class="input-field bg-slate-50 uppercase text-gray-500"></div>
+        <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Item</label><input value="${name}" disabled class="input-field bg-slate-50 uppercase text-gray-500"></div>
         
-        <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">To Destination</label><select id="tTo" class="input-field cursor-pointer hover:border-black">${locs.map(l=>`<option value="${l.id}">${l.name} (${l.type.replace('_',' ')})</option>`).join('')}</select></div>
+        <div class="input-group" style="position: relative; z-index: 40;"><label class="input-label">To Destination</label><select id="tTo" class="input-field cursor-pointer hover:border-black">${locs.map(l=>`<option value="${l.id}">${l.name} (${l.type.replace('_',' ')})</option>`).join('')}</select></div>
         
         <div class="input-group" style="position: relative; z-index: 30;"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div>
-        <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-6">Request Transfer</button>`;
+        
+        <button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-6" style="position: relative; z-index: 10;">Request Transfer</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
-// 4. INVITE STAFF (Input > Select > Select - FIXED)
+// 4. INVITE STAFF (Email > Role > Location)
 window.inviteModal = async () => { 
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3>
-        <div class="input-group" style="position: relative; z-index: 30;"><label class="input-label">Email</label><input id="iE" class="input-field" placeholder="email@company.com"></div>
-        <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Role</label><select id="iR" class="input-field cursor-pointer"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div>
-        <div class="input-group" style="position: relative; z-index: 40;"><label class="input-label">Assign Location</label><select id="iL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
-        <button onclick="window.execInvite()" class="btn-primary mt-6">Send Invitation</button>`; 
+        <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Email</label><input id="iE" class="input-field" placeholder="email@company.com"></div>
+        <div class="input-group" style="position: relative; z-index: 40;"><label class="input-label">Role</label><select id="iR" class="input-field cursor-pointer"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div>
+        <div class="input-group" style="position: relative; z-index: 30;"><label class="input-label">Assign Location</label><select id="iL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
+        <button onclick="window.execInvite()" class="btn-primary mt-6" style="position: relative; z-index: 10;">Send Invitation</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
 
-// 5. ADD HUB (Input > Select - FIXED)
-window.addStoreModal=()=>{ document.getElementById('modal-content').innerHTML=`<h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3><div class="input-group" style="position: relative; z-index: 40;"><label class="input-label">Name</label><input id="nN" class="input-field"></div><div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div><button onclick="window.execAddStore()" class="btn-primary mt-6">Create</button>`; document.getElementById('modal').style.display = 'flex'; };
+// 5. ADD HUB (Name > Type)
+window.addStoreModal=()=>{ 
+    document.getElementById('modal-content').innerHTML=`
+    <h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3>
+    <div class="input-group" style="position: relative; z-index: 50;"><label class="input-label">Name</label><input id="nN" class="input-field"></div>
+    <div class="input-group" style="position: relative; z-index: 40;"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div>
+    <button onclick="window.execAddStore()" class="btn-primary mt-6" style="position: relative; z-index: 10;">Create</button>`; 
+    document.getElementById('modal').style.display = 'flex'; 
+};
 
+// --- EXEC FUNCTIONS ---
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); await supabase.from('inventory').insert({ product_id: pid, location_id: lid, quantity: qty, organization_id: profile.organization_id }); await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Received", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
