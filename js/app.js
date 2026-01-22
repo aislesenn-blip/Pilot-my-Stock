@@ -2,25 +2,25 @@ import { getSession, logout } from './auth.js';
 import { getInventory, createLocation, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
+// --- GLOBAL VARIABLES ---
 let profile = null;
 let cart = [];
 let currentLogs = [];
 let selectedDestinationId = null;
 let activePosLocationId = null;
 
-// --- 🧠 CURRENCY INTELLIGENCE ---
+// --- CURRENCY SETTINGS ---
 let baseCurrency = 'USD'; 
 let currencyRates = {};   
 let selectedCurrency = 'USD'; 
 const STRONG_CURRENCIES = ['USD', 'EUR', 'GBP'];
 const SUPPORTED_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES'];
 
-// --- HELPER TO CLOSE MODALS ---
+// --- UTILITIES ---
 window.closeModalOutside = (e) => { 
     if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; 
 };
 
-// --- NOTIFICATIONS ---
 window.showNotification = (message, type = 'success') => {
     const existing = document.getElementById('notif-toast');
     if(existing) existing.remove();
@@ -33,82 +33,127 @@ window.showNotification = (message, type = 'success') => {
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 300); }, 3000);
 };
 
-// --- CONFIRMATION DIALOG ---
 window.showConfirm = (title, desc, callback) => {
     document.getElementById('confirm-title').innerText = title;
     document.getElementById('confirm-desc').innerText = desc;
     document.getElementById('confirm-modal').style.display = 'flex';
-    
-    // Recreate button to remove old listeners
     const btn = document.getElementById('confirm-btn');
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
-    
     newBtn.addEventListener('click', async () => {
         document.getElementById('confirm-modal').style.display = 'none';
         await callback();
     });
 };
 
-// --- 💰 CURRENCY ENGINE ---
+// --- 💰 CURRENCY ENGINE (DEEP LOGIC) ---
 window.initCurrency = async () => {
     if (!profile) return;
     try {
+        // 1. Get Organization Base Currency
         const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', profile.organization_id).single();
         if (org) {
             baseCurrency = org.base_currency;
-            selectedCurrency = baseCurrency; 
+            // Default display to base currency initially
+            if (!localStorage.getItem('user_pref_currency')) {
+                selectedCurrency = baseCurrency; 
+            }
         }
+
+        // 2. Get Exchange Rates
         const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', profile.organization_id);
+        
         currencyRates = {};
-        if (rates && rates.length > 0) rates.forEach(r => currencyRates[r.currency_code] = r.rate);
+        // Reset base rate to 1
         currencyRates[baseCurrency] = 1;
-        console.log(`System Base: ${baseCurrency}`, currencyRates);
-    } catch (e) { console.error("Currency Init Error:", e); }
+
+        if (rates && rates.length > 0) {
+            rates.forEach(r => {
+                currencyRates[r.currency_code] = Number(r.rate);
+            });
+        }
+        
+        console.log(`[SYSTEM] Currency Initialized. Base: ${baseCurrency}`, currencyRates);
+    } catch (e) { 
+        console.error("Currency Init Error:", e); 
+        window.showNotification("Failed to load currency rates", "error");
+    }
 };
 
 window.convertAmount = (amount, fromCurr, toCurr) => {
-    if (fromCurr === toCurr) return amount;
+    // Safety check
+    if (amount === null || amount === undefined) return 0;
     
-    // STRICT CHECK: If rate is missing, RETURN NULL
-    const foreignCurr = STRONG_CURRENCIES.includes(fromCurr) ? fromCurr : toCurr;
-    const rate = currencyRates[foreignCurr];
-    
-    if (!rate || rate === 0) return null; 
+    // Get rates
+    const fromRate = currencyRates[fromCurr];
+    const toRate = currencyRates[toCurr];
 
-    if (STRONG_CURRENCIES.includes(fromCurr) && !STRONG_CURRENCIES.includes(toCurr)) return amount * rate; 
-    if (!STRONG_CURRENCIES.includes(fromCurr) && STRONG_CURRENCIES.includes(toCurr)) return amount / rate; 
+    // CRITICAL CHECK: If any rate is missing/zero (except if it's the same currency), FAIL.
+    if (fromCurr !== toCurr) {
+        if (!fromRate || !toRate) return null; // Signal that rate is missing
+    } else {
+        return amount; // Same currency requires no conversion
+    }
+
+    // LOGIC: Convert 'from' to Base, then Base to 'to'
+    // Step 1: To Base (Divide by fromRate) => Base Value
+    // Step 2: To Target (Multiply by toRate) => Target Value
+    // BUT our rates are stored as "1 Base = X Target".
+    // So: Amount (in Base) * toRate = Target Amount.
     
-    return amount; // Fallback same strength
+    // Case 1: Base to Foreign (Displaying USD price in TZS)
+    // Formula: Amount * Rate
+    if (fromCurr === baseCurrency) {
+        return amount * toRate;
+    }
+
+    // Case 2: Foreign to Base (Saving TZS input as USD)
+    // Formula: Amount / Rate
+    if (toCurr === baseCurrency) {
+        return amount / fromRate;
+    }
+
+    // Case 3: Foreign to Foreign (TZS to KES) -> Not supported yet for safety
+    return null;
 };
 
 window.formatPrice = (amount) => {
     if (!amount && amount !== 0) return '-';
     
+    // Amount coming in is ALWAYS in Base Currency (from DB)
+    // We want to show it in Selected Currency
     const converted = window.convertAmount(amount, baseCurrency, selectedCurrency);
     
-    if (converted === null) return '<span class="text-red-500 text-[9px] font-bold bg-red-50 px-1 rounded">SET RATE</span>';
+    // If conversion failed (missing rate), show error
+    if (converted === null) {
+        return `<span class="text-red-600 bg-red-50 px-1 rounded text-[10px] font-bold border border-red-200">SET ${selectedCurrency} RATE</span>`;
+    }
     
-    const decimals = STRONG_CURRENCIES.includes(selectedCurrency) ? 2 : 0;
-    return `${selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: decimals, maximumFractionDigits: decimals})}`;
+    const isWeak = converted > 1000; 
+    return `${selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: isWeak?0:2, maximumFractionDigits: isWeak?0:2})}`;
 };
 
 window.changeCurrency = (curr) => {
+    console.log("Changing currency to:", curr);
     selectedCurrency = curr;
-    const activeEl = document.querySelector('.nav-item.nav-active');
-    if(activeEl) router(activeEl.id.replace('nav-', ''));
+    // Refresh the active view to update prices
+    const activeNav = document.querySelector('.nav-item.nav-active');
+    if (activeNav) {
+        const viewId = activeNav.id.replace('nav-', '');
+        window.router(viewId);
+    }
 };
 
 window.getCurrencySelectorHTML = () => {
-    const options = SUPPORTED_CURRENCIES.map(c => `<option value="${c}" ${selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join('');
-    return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`;
+    const options = SUPPORTED_CURRENCIES.map(c => 
+        `<option value="${c}" ${selectedCurrency === c ? 'selected' : ''}>${c}</option>`
+    ).join('');
+    return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4 shadow-sm focus:ring-2 focus:ring-black">${options}</select>`;
 };
 
-// --- INITIALIZATION ---
+// --- MAIN ROUTER & INIT ---
 window.onload = async () => {
-    // Attach Global Functions Explicitly (HII NDIO ILIKUWA INAKOSEKANA)
-    window.logout = logout;
-    
+    console.log("[SYSTEM] Starting...");
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
@@ -121,63 +166,56 @@ window.onload = async () => {
 
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
+    
     try {
         await supabase.rpc('claim_my_invite', { email_to_check: session.user.email, user_id_to_link: session.user.id });
-        let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         
+        let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         if (!prof) {
-            await new Promise(r => setTimeout(r, 1000));
+            await new Promise(r => setTimeout(r, 1000)); // Retry
             let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
             prof = retry.data;
         }
+        
         profile = prof;
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
+        console.log("[SYSTEM] Profile Loaded:", profile.role);
+
+        // Load Currencies BEFORE rendering anything
         await window.initCurrency();
 
-        const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
-        const currentName = profile.full_name ? profile.full_name.trim() : "";
-        if (currentName.length < 3 || forbiddenNames.some(n => currentName.toLowerCase().includes(n.toLowerCase()))) {
-            document.getElementById('name-modal').style.display = 'flex';
-        } else {
-            const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
-            if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
-        }
-        
+        window.logoutAction = logout;
         applyStrictPermissions(profile.role);
-        router(profile.role === 'barman' ? 'bar' : 'inventory');
+        
+        // Start at Inventory
+        window.router('inventory');
+        
     } catch (e) { 
-        console.error("Init Error:", e);
-        document.body.innerHTML = `<div class="p-10 text-center"><h1 class="text-xl font-bold text-red-600">System Error</h1><p class="text-sm text-gray-600">Please refresh the page.</p></div>`;
-    }
-};
-
-window.saveName = async () => {
-    const nameInput = document.getElementById('userNameInput').value;
-    if (!nameInput || nameInput.length < 3) return window.showNotification("Invalid name", "error");
-    const { error } = await supabase.from('profiles').update({ full_name: nameInput }).eq('id', profile.id);
-    if (!error) {
-        profile.full_name = nameInput;
-        document.getElementById('name-modal').style.display = 'none';
-        window.showNotification("Welcome " + nameInput, "success");
+        console.error("Critical Init Error:", e);
+        document.body.innerHTML = `<div class="p-20 text-center"><h1 class="text-red-600 font-bold text-2xl">System Error</h1><p class="mt-2 text-gray-600">${e.message}</p><button onclick="location.reload()" class="mt-4 btn-primary">Reload</button></div>`;
     }
 };
 
 function applyStrictPermissions(role) {
     const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
     const show = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'flex'; });
+    
     show(['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
+    
     if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
     else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
     else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
 }
 
 window.router = async (view) => {
+    console.log("[ROUTER] Navigating to:", view);
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
     
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active'));
-    document.getElementById(`nav-${view}`)?.classList.add('nav-active');
+    const navEl = document.getElementById(`nav-${view}`);
+    if(navEl) navEl.classList.add('nav-active');
     
     try {
         if (view === 'inventory') await renderInventory(app);
@@ -187,61 +225,122 @@ window.router = async (view) => {
         else if (view === 'staff') await renderStaff(app);
         else if (view === 'settings') await renderSettings(app);
     } catch (err) { 
-        console.error("Router Error:", err);
-        app.innerHTML = `<div class="p-10 text-center"><p class="text-red-500 font-bold">Error loading view.</p></div>`;
+        console.error("View Error:", err);
+        app.innerHTML = `<div class="p-10 text-center"><p class="text-red-500 font-bold">Error loading view: ${err.message}</p></div>`;
     }
 };
 
-// --- INVENTORY ---
+// --- VIEW 1: INVENTORY (STOCK & LPO) ---
 async function renderInventory(c) {
     const isPOView = window.currentInvView === 'po'; 
     const { data: catalog } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     const stock = await getInventory(profile.organization_id);
-    const filteredStock = (profile.role === 'manager' || profile.role === 'finance') ? stock : stock.filter(x => x.location_id === profile.assigned_location_id);
+    
+    // Filter stock based on role
+    const filteredStock = (profile.role === 'manager' || profile.role === 'finance') 
+        ? stock 
+        : stock.filter(x => x.location_id === profile.assigned_location_id);
+        
     const showPrice = profile.role === 'manager' || profile.role === 'finance';
 
     let contentHTML = '';
+    
     if (isPOView) {
+        // LPO VIEW
         const { data: pos } = await supabase.from('purchase_orders').select('*').eq('organization_id', profile.organization_id).order('created_at', {ascending:false});
         const safePos = pos || [];
-        contentHTML = `<table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4">Date</th><th>Supplier</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody>
-        ${safePos.length ? safePos.map(po => `<tr><td class="py-3 pl-4 text-xs font-bold text-slate-600">${new Date(po.created_at).toLocaleDateString()}</td><td class="text-xs uppercase font-bold text-slate-800">${po.supplier_name}</td><td class="text-xs font-mono font-bold">${window.formatPrice(po.total_cost)}</td><td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${po.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}">${po.status}</span></td><td>${po.status === 'Pending' ? `<button onclick="window.receivePO('${po.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded hover:bg-slate-700">RECEIVE</button>` : '<span class="text-slate-400 text-[10px]">DONE</span>'}</td></tr>`).join('') : '<tr><td colspan="5" class="p-8 text-center text-xs text-slate-400">No Purchase Orders found.</td></tr>'}</tbody></table>`;
+        
+        contentHTML = `
+        <table class="w-full text-left">
+            <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase"><tr><th class="py-3 pl-4">Date</th><th>Supplier</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+            ${safePos.length ? safePos.map(po => `
+                <tr class="border-b border-slate-50 hover:bg-slate-50">
+                    <td class="py-3 pl-4 text-xs font-bold text-slate-600">${new Date(po.created_at).toLocaleDateString()}</td>
+                    <td class="text-xs uppercase font-bold text-slate-800">${po.supplier_name}</td>
+                    <td class="text-xs font-mono font-bold">${window.formatPrice(po.total_cost)}</td>
+                    <td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${po.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}">${po.status}</span></td>
+                    <td>${po.status === 'Pending' ? `<button onclick="window.receivePO('${po.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded hover:bg-slate-700 font-bold">RECEIVE</button>` : '<span class="text-slate-400 text-[10px] font-bold">DONE</span>'}</td>
+                </tr>`).join('') : '<tr><td colspan="5" class="p-8 text-center text-xs text-slate-400 uppercase tracking-widest">No Purchase Orders found.</td></tr>'}
+            </tbody>
+        </table>`;
     } else {
-        contentHTML = `<table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4">Item</th>${showPrice ? `<th>Cost</th><th>Price</th>` : ''}<th>Location</th><th>Qty</th><th>Action</th></tr></thead><tbody>
-        ${filteredStock.length ? filteredStock.map(i => `<tr class="border-b border-slate-50 last:border-0"><td class="py-3 pl-4"><div class="font-bold text-gray-800 uppercase">${i.products?.name || 'Unknown'}</div><div class="text-[9px] text-slate-400 font-bold uppercase tracking-wider">${i.products?.category || 'General'}</div></td>${showPrice ? `<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs text-slate-900 font-bold">${window.formatPrice(i.products.selling_price)}</td>` : ''}<td class="text-xs font-bold text-gray-500 uppercase tracking-widest">${i.locations?.name || '-'}</td><td class="font-mono font-bold text-gray-900 text-lg">${i.quantity} <span class="text-[10px] text-slate-400">${i.products?.unit || ''}</span></td><td class="text-right pr-4 flex justify-end gap-2 items-center py-3">${profile.role !== 'barman' ? `<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-100 transition uppercase">MOVE</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="6" class="p-8 text-center text-xs text-slate-400">No stock available.</td></tr>'}</tbody></table>`;
+        // STOCK VIEW
+        contentHTML = `
+        <table class="w-full text-left">
+            <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase"><tr><th class="py-3 pl-4">Item & Category</th>${showPrice ? `<th>Cost</th><th>Price</th>` : ''}<th>Location</th><th>Qty</th><th>Action</th></tr></thead>
+            <tbody>
+            ${filteredStock.length ? filteredStock.map(i => `
+                <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 group">
+                    <td class="py-3 pl-4">
+                        <div class="font-bold text-gray-800 uppercase text-sm">${i.products?.name || 'Unknown'}</div>
+                        <div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider">${i.products?.category || 'General'}</div>
+                    </td>
+                    ${showPrice ? `<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs text-slate-900 font-bold">${window.formatPrice(i.products.selling_price)}</td>` : ''}
+                    <td class="text-xs font-bold text-gray-500 uppercase tracking-widest">${i.locations?.name || '-'}</td>
+                    <td class="font-mono font-bold text-gray-900 text-lg">${i.quantity} <span class="text-[10px] text-slate-400">${i.products?.unit || ''}</span></td>
+                    <td class="text-right pr-4 flex justify-end gap-2 items-center py-3">
+                        ${profile.role !== 'barman' ? `<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold bg-white border border-slate-300 text-slate-700 px-3 py-1 rounded hover:bg-slate-100 transition uppercase shadow-sm">MOVE</button>` : ''}
+                    </td>
+                </tr>`).join('') : '<tr><td colspan="6" class="p-12 text-center text-xs text-slate-400 uppercase tracking-widest border-2 border-dashed border-slate-100 rounded-xl m-4">No stock available.</td></tr>'}
+            </tbody>
+        </table>`;
     }
 
     c.innerHTML = `
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
-            <div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div>
-            <div class="flex gap-2">
-                <button onclick="window.currentInvView='stock'; router('inventory')" class="px-4 py-2 text-xs font-bold rounded-full ${!isPOView ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">STOCK</button>
-                <button onclick="window.currentInvView='po'; router('inventory')" class="px-4 py-2 text-xs font-bold rounded-full ${isPOView ? 'bg-slate-900 text-white' : 'bg-white border text-slate-600'}">PURCHASE ORDERS (LPO)</button>
+            <div class="flex items-center gap-4">
+                <h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>
+                ${showPrice ? window.getCurrencySelectorHTML() : ''}
             </div>
-            <div class="flex gap-3">${profile.role === 'manager' ? `<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6">New Item</button>` : ''}</div>
+            <div class="flex gap-2 bg-slate-100 p-1 rounded-full">
+                <button onclick="window.currentInvView='stock'; router('inventory')" class="px-5 py-2 text-xs font-bold rounded-full transition-all ${!isPOView ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}">STOCK</button>
+                <button onclick="window.currentInvView='po'; router('inventory')" class="px-5 py-2 text-xs font-bold rounded-full transition-all ${isPOView ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}">PURCHASE ORDERS</button>
+            </div>
+            <div class="flex gap-3">
+                ${profile.role === 'manager' ? `<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 bg-blue-600 hover:bg-blue-700 text-xs shadow-lg shadow-blue-200">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 text-xs shadow-lg shadow-slate-200">New Item</button>` : ''}
+            </div>
         </div>
-        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">${contentHTML}</div>`;
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${contentHTML}</div>`;
 }
 
-// --- REPORTS (WITH FILTERS) ---
+// --- VIEW 2: REPORTS (AUDIT & VARIANCE) ---
 async function renderReports(c) {
     try {
         const isVarianceView = window.currentRepView === 'variance';
         const showFinancials = (profile.role === 'manager' || profile.role === 'finance');
 
         if (isVarianceView) {
+            // STOCK TAKE VIEW
             const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name)').eq('organization_id', profile.organization_id).order('created_at', {ascending:false});
             const safeTakes = takes || [];
             
             c.innerHTML = `
-            <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Reconciliation</h1>
-                <div class="flex gap-2"><button onclick="window.currentRepView='general'; router('reports')" class="px-4 py-2 text-xs font-bold rounded-full bg-white border text-slate-600">GENERAL</button><button class="px-4 py-2 text-xs font-bold rounded-full bg-slate-900 text-white">VARIANCE</button></div>
-                <button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-red-600 hover:bg-red-700">NEW STOCK TAKE</button>
+            <div class="flex justify-between items-center mb-8">
+                <h1 class="text-3xl font-bold uppercase text-slate-900">Reconciliation</h1>
+                <div class="flex gap-2 bg-slate-100 p-1 rounded-full">
+                    <button onclick="window.currentRepView='general'; router('reports')" class="px-5 py-2 text-xs font-bold rounded-full transition-all text-slate-500 hover:text-slate-700">GENERAL</button>
+                    <button class="px-5 py-2 text-xs font-bold rounded-full bg-white text-slate-900 shadow-sm">VARIANCE</button>
+                </div>
+                <button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-slate-900 hover:bg-slate-800 text-xs shadow-lg">NEW STOCK TAKE</button>
             </div>
-            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead class="bg-slate-50 border-b"><tr><th class="py-3 pl-4">Date</th><th>Location</th><th>Conducted By</th><th>Status</th><th>Report</th></tr></thead><tbody>
-            ${safeTakes.length ? safeTakes.map(t => `<tr><td class="py-3 pl-4 text-xs font-bold">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs uppercase">${t.locations?.name || '-'}</td><td class="text-xs">${t.profiles?.full_name || '-'}</td><td><span class="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded">COMPLETED</span></td><td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px] underline">VIEW REPORT</button></td></tr>`).join('') : '<tr><td colspan="5" class="p-8 text-center text-xs text-slate-400">No stock takes recorded.</td></tr>'}
-            </tbody></table></div>`;
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <table class="w-full text-left">
+                    <thead class="bg-slate-50 border-b text-xs text-slate-500 uppercase"><tr><th class="py-3 pl-4">Date</th><th>Location</th><th>Conducted By</th><th>Status</th><th>Report</th></tr></thead>
+                    <tbody>
+                    ${safeTakes.length ? safeTakes.map(t => `
+                        <tr class="border-b border-slate-50 hover:bg-slate-50">
+                            <td class="py-3 pl-4 text-xs font-bold">${new Date(t.created_at).toLocaleDateString()}</td>
+                            <td class="text-xs uppercase font-bold text-slate-700">${t.locations?.name || '-'}</td>
+                            <td class="text-xs text-slate-500">${t.profiles?.full_name || '-'}</td>
+                            <td><span class="text-[9px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200">COMPLETED</span></td>
+                            <td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px] hover:underline flex items-center gap-1">VIEW REPORT <span>→</span></button></td>
+                        </tr>`).join('') : '<tr><td colspan="5" class="p-8 text-center text-xs text-slate-400">No stock takes recorded yet.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>`;
         } else {
+            // GENERAL AUDIT VIEW
             const { data: logs, error } = await supabase.from('transactions').select(`*, products (name, category), locations:to_location_id (name), from_loc:from_location_id (name), profiles:user_id (full_name, role)`).eq('organization_id', profile.organization_id).order('created_at', { ascending: false }).limit(100);
             
             if (error) throw error;
@@ -251,19 +350,43 @@ async function renderReports(c) {
             const totalProfit = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
 
             c.innerHTML = `
-            <div class="flex justify-between items-center mb-10 gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1>${showFinancials ? window.getCurrencySelectorHTML() : ''}</div>
-                <div class="flex gap-2"><button class="px-4 py-2 text-xs font-bold rounded-full bg-slate-900 text-white">GENERAL</button><button onclick="window.currentRepView='variance'; router('reports')" class="px-4 py-2 text-xs font-bold rounded-full bg-white border text-slate-600">VARIANCE</button></div>
+            <div class="flex justify-between items-center mb-10 gap-4">
+                <div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1>${showFinancials ? window.getCurrencySelectorHTML() : ''}</div>
+                <div class="flex gap-2 bg-slate-100 p-1 rounded-full">
+                    <button class="px-5 py-2 text-xs font-bold rounded-full bg-white text-slate-900 shadow-sm">GENERAL</button>
+                    <button onclick="window.currentRepView='variance'; router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500 hover:text-slate-700">VARIANCE</button>
+                </div>
             </div>
-            ${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">${window.formatPrice(totalProfit)}</p></div></div>` : ''}
+            
+            ${showFinancials ? `
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+                <div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm">
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales Revenue</p>
+                    <p class="text-4xl font-bold font-mono text-slate-900">${window.formatPrice(totalSales)}</p>
+                </div>
+                <div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm">
+                    <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p>
+                    <p class="text-4xl font-bold font-mono text-green-600">${window.formatPrice(totalProfit)}</p>
+                </div>
+            </div>` : ''}
             
             <div class="flex flex-wrap gap-2 mb-6">
-                <button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button>
-                <button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button>
-                <button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button>
-                <button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button>
+                <button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full shadow-md hover:bg-slate-800 transition">ALL TRANSACTIONS</button>
+                <button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full hover:border-slate-900 hover:text-slate-900 transition">SALES ONLY</button>
+                <button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full hover:border-slate-900 hover:text-slate-900 transition">TRANSFERS</button>
+                <button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full hover:border-slate-900 hover:text-slate-900 transition">CONSUMPTION</button>
             </div>
 
-            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Date</th><th class="text-xs font-bold text-slate-400 uppercase">User</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table id="reportTable" class="w-full text-left">
+                        <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase">
+                            <tr><th class="py-3 pl-4">Date</th><th>User</th><th>Item</th><th>Action</th><th>Details</th><th>Qty</th></tr>
+                        </thead>
+                        <tbody id="logsBody"></tbody>
+                    </table>
+                </div>
+            </div>`;
             window.filterLogs('all');
         }
     } catch(e) { console.error("REPORT ERROR:", e); c.innerHTML = `<div class="p-12 text-center border-2 border-red-100 rounded-xl bg-red-50"><h3 class="text-red-600 font-bold text-lg mb-2">SYSTEM ERROR</h3><p class="text-slate-700 font-mono text-xs bg-white p-4 border rounded inline-block text-left shadow-sm">${e.message || JSON.stringify(e)}</p></div>`; }
@@ -278,25 +401,42 @@ window.filterLogs=(t)=>{
     const b = document.getElementById('logsBody');
     if(!b) return;
     
-    if(!f.length){b.innerHTML='<tr><td colspan="6" class="text-center text-xs text-gray-400 py-12">No records found.</td></tr>';return;}
+    if(!f.length){b.innerHTML='<tr><td colspan="6" class="text-center text-xs text-gray-400 py-12 uppercase tracking-widest">No matching records found.</td></tr>';return;}
     
     b.innerHTML=f.map(l=>{
         const d=new Date(l.created_at);
         let a=l.type.replace('_',' ').toUpperCase(),c='bg-blue-50 text-blue-600',det=`${l.from_loc?.name||'-'} ➜ ${l.locations?.name||'-'}`;
         if(l.type==='sale'){c='bg-green-50 text-green-600';det='POS Sale';}
         if(l.type==='receive'){c='bg-slate-100 text-slate-600';det='Supplier Entry';}
-        return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="py-3 pl-4"><div class="font-bold text-slate-700 text-xs">${d.toLocaleDateString()}</div><div class="text-[10px] text-slate-400 font-mono">${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div></td><td><div class="font-bold text-slate-900 text-xs">${l.profiles?.full_name || 'System'}</div><div class="text-[9px] font-bold text-slate-500 uppercase">${l.profiles?.role || '-'}</div></td><td><div class="font-bold uppercase text-xs text-slate-700">${l.products?.name || 'Unknown'}</div><div class="text-[9px] font-bold text-slate-400 uppercase">${l.products?.category || '-'}</div></td><td><span class="font-bold uppercase ${c} text-[9px] tracking-widest px-2 py-1 rounded-full">${a}</span></td><td class="text-xs uppercase text-gray-500 font-medium">${det}</td><td class="font-mono font-bold text-slate-900">${l.quantity}</td></tr>`;
+        return `
+        <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition">
+            <td class="py-3 pl-4">
+                <div class="font-bold text-slate-700 text-xs">${d.toLocaleDateString()}</div>
+                <div class="text-[10px] text-slate-400 font-mono">${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+            </td>
+            <td>
+                <div class="font-bold text-slate-900 text-xs">${l.profiles?.full_name || 'System'}</div>
+                <div class="text-[9px] font-bold text-slate-500 uppercase">${l.profiles?.role || '-'}</div>
+            </td>
+            <td>
+                <div class="font-bold uppercase text-xs text-slate-700">${l.products?.name || 'Unknown'}</div>
+                <div class="text-[9px] font-bold text-slate-400 uppercase">${l.products?.category || '-'}</div>
+            </td>
+            <td><span class="font-bold uppercase ${c} text-[9px] tracking-widest px-2 py-1 rounded-full border border-opacity-10">${a}</span></td>
+            <td class="text-xs uppercase text-gray-500 font-medium">${det}</td>
+            <td class="font-mono font-bold text-slate-900 text-sm">${l.quantity}</td>
+        </tr>`;
     }).join('');
 }
 
-// --- PO & STOCK TAKE LOGIC ---
+// --- MODAL ACTIONS (LPO, STOCK TAKE) ---
 window.createPOModal = async () => {
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-6 uppercase text-center">Create LPO</h3>
     <div class="input-group"><label class="input-label">Supplier Name</label><input id="lpoSup" class="input-field" placeholder="e.g. Serengeti Brewers"></div>
-    <div class="bg-slate-50 p-4 rounded-xl mb-4 border border-slate-100"><label class="input-label mb-2">Select Items</label>
-    ${prods.map(p => `<div class="flex items-center gap-2 mb-2"><input type="checkbox" class="lpo-check w-4 h-4" value="${p.id}" data-price="${p.cost_price}"><span class="flex-1 text-xs font-bold uppercase">${p.name}</span><input type="number" id="qty-${p.id}" class="w-16 input-field text-xs p-1" placeholder="Qty"></div>`).join('')}</div>
+    <div class="bg-slate-50 p-4 rounded-xl mb-4 border border-slate-100 max-h-[300px] overflow-y-auto"><label class="input-label mb-2">Select Items</label>
+    ${prods.map(p => `<div class="flex items-center gap-2 mb-2 p-2 bg-white rounded border border-slate-100"><input type="checkbox" class="lpo-check w-4 h-4 cursor-pointer" value="${p.id}" data-price="${p.cost_price}"><span class="flex-1 text-xs font-bold uppercase">${p.name}</span><input type="number" id="qty-${p.id}" class="w-16 input-field text-xs p-2" placeholder="Qty"></div>`).join('')}</div>
     <button onclick="window.execCreatePO()" class="btn-primary">Generate Order</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
@@ -336,7 +476,7 @@ window.startStockTake = async () => {
     const locId = document.getElementById('stLoc').value;
     const inv = await getInventory(profile.organization_id);
     const items = inv.filter(x => x.location_id === locId);
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Enter Physical Count</h3><div class="max-h-[300px] overflow-y-auto bg-slate-50 p-2 rounded mb-4"><table class="w-full text-left text-xs"><thead><tr><th>Item</th><th>System</th><th>Physical</th></tr></thead><tbody>${items.map(i => `<tr><td class="py-2 font-bold uppercase">${i.products.name}</td><td>${i.quantity}</td><td><input type="number" class="st-input w-16 border rounded p-1" data-id="${i.product_id}" data-sys="${i.quantity}"></td></tr>`).join('')}</tbody></table></div><button onclick="window.saveStockTake('${locId}')" class="btn-primary">Submit Variance Report</button>`;
+    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Enter Physical Count</h3><div class="max-h-[300px] overflow-y-auto bg-slate-50 p-2 rounded mb-4"><table class="w-full text-left text-xs"><thead><tr><th>Item</th><th>System</th><th>Physical</th></tr></thead><tbody>${items.map(i => `<tr><td class="py-2 font-bold uppercase">${i.products.name}</td><td>${i.quantity}</td><td><input type="number" class="st-input w-20 border rounded p-2 font-bold text-center" data-id="${i.product_id}" data-sys="${i.quantity}"></td></tr>`).join('')}</tbody></table></div><button onclick="window.saveStockTake('${locId}')" class="btn-primary">Submit Variance Report</button>`;
 };
 
 window.saveStockTake = async (locId) => {
@@ -354,7 +494,7 @@ window.viewVariance = async (id) => {
     html += `</tbody></table><button onclick="document.getElementById('modal').style.display='none'" class="btn-primary mt-4 w-full">Close</button>`; document.getElementById('modal-content').innerHTML = html; document.getElementById('modal').style.display = 'flex';
 };
 
-// --- SETTINGS (UI FIX) ---
+// --- SETTINGS ---
 async function renderSettings(c) {
     try {
         const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id);
@@ -425,8 +565,7 @@ window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document
 window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
 window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
 
-// --- ATTACH GLOBALS MANUALLY (THE FIX) ---
-// Hii inahakikisha HTML inaona functions hizi
+// --- CRITICAL: ATTACH GLOBALS TO WINDOW ---
 window.addProductModal = window.addProductModal;
 window.execAddProduct = window.execAddProduct;
 window.addStockModal = window.addStockModal;
