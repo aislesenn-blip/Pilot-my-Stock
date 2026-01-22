@@ -2,9 +2,12 @@ import { getSession, logout } from './auth.js';
 import { getInventory, createLocation, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
-let profile = null; let cart = []; let currentLogs = [];
+let profile = null; 
+let cart = []; 
+let currentLogs = [];
 let selectedDestinationId = null; 
 let currentActionId = null; 
+let activePosLocationId = null; // --- HII ILIKUWA IMEKOSEKANA ---
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
@@ -44,7 +47,7 @@ window.onload = async () => {
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
 
-    // Mobile Menu Logic (Redundant safety)
+    // Mobile Menu Logic
     const mobileBtn = document.getElementById('mobile-menu-btn');
     const sidebar = document.getElementById('sidebar');
     if(mobileBtn && sidebar) {
@@ -117,13 +120,82 @@ window.router = async (view) => {
     
     try {
         if (view === 'inventory') await renderInventory(app);
-        else if (view === 'bar') await renderBar(app);
+        else if (view === 'bar') await renderBar(app); // --- HAPA NDIPO ILIKUWA INAFELI KAMA FUNCTION HAIPO ---
         else if (view === 'approvals') await renderApprovals(app);
         else if (view === 'reports') await renderReports(app);
         else if (view === 'staff') await renderStaff(app);
         else if (view === 'settings') await renderSettings(app);
-    } catch (err) { window.showNotification("Error loading view", "error"); }
+    } catch (err) { 
+        console.error(err);
+        app.innerHTML = `<div class="p-10 text-center"><p class="text-red-500 font-bold">Error loading view: ${err.message}</p></div>`;
+    }
 };
+
+// --- POS / BAR MODULE (ADDED) ---
+async function renderBar(c) {
+    try {
+        const inv = await getInventory(profile.organization_id);
+        const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).eq('type', 'department');
+
+        // Logic ya kuchagua stoo
+        if (profile.role === 'barman') {
+            activePosLocationId = profile.assigned_location_id;
+        } else {
+            // Manager/Finance default selection
+            if (!activePosLocationId && locs.length > 0) activePosLocationId = locs[0].id;
+        }
+
+        const storeSelector = (profile.role === 'manager' || profile.role === 'finance') ? `
+            <div class="mb-6 bg-white p-4 rounded-xl border flex items-center gap-4 shadow-sm">
+                <span class="text-xs font-bold text-slate-400 uppercase">Select Counter:</span>
+                <select onchange="window.switchBar(this.value)" class="bg-transparent font-bold outline-none cursor-pointer text-sm">
+                    <option value="">-- Choose --</option>
+                    ${locs.map(l => `<option value="${l.id}" ${activePosLocationId === l.id ? 'selected' : ''}>${l.name}</option>`).join('')}
+                </select>
+            </div>` : '';
+
+        const items = inv.filter(x => x.location_id === activePosLocationId);
+
+        c.innerHTML = `
+            ${storeSelector}
+            <div class="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)]">
+                <div class="flex-1 overflow-y-auto pr-2">
+                    <h1 class="text-2xl font-bold mb-6 uppercase text-slate-900 sticky top-0 bg-slate-100 py-2 z-10">POS Terminal</h1>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 pb-10">
+                        ${items.length ? items.map(x => `
+                            <div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" 
+                                 class="bg-white p-5 border rounded-2xl cursor-pointer hover:border-slate-900 transition shadow-sm group relative overflow-hidden">
+                                <div class="absolute top-0 right-0 bg-slate-100 px-2 py-1 rounded-bl-lg text-[10px] font-bold text-slate-500">Qty: ${x.quantity}</div>
+                                <p class="text-[10px] font-bold text-slate-400 uppercase mb-1 tracking-wider">${x.products.name}</p>
+                                <p class="font-bold text-xl text-slate-900">$${x.products.selling_price}</p>
+                            </div>`).join('') : 
+                            '<div class="col-span-3 text-center py-12 border-2 border-dashed border-slate-300 rounded-2xl"><p class="text-slate-400 font-bold text-xs uppercase">No stock found here.</p></div>'}
+                    </div>
+                </div>
+
+                <div class="w-full lg:w-96 bg-white border border-slate-200 rounded-2xl p-6 h-full flex flex-col shadow-xl">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="font-bold text-xs uppercase text-slate-400 tracking-widest">Current Order</h3>
+                        <button onclick="cart=[];window.renderCart()" class="text-[10px] text-red-500 font-bold hover:underline">CLEAR</button>
+                    </div>
+                    <div id="cart-list" class="flex-1 overflow-y-auto space-y-3 mb-4 pr-1"></div>
+                    <div class="border-t border-slate-100 pt-6 mt-auto">
+                        <div class="flex justify-between font-bold text-2xl mb-6 text-slate-900">
+                            <span>Total</span>
+                            <span id="cart-total">$0.00</span>
+                        </div>
+                        <button onclick="window.checkout()" class="w-full bg-slate-900 text-white py-4 rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 shadow-lg transform active:scale-95 transition">
+                            Complete Sale
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+        window.renderCart();
+    } catch (e) {
+        console.error("POS Error:", e);
+        c.innerHTML = `<div class="p-10 text-center bg-red-50 border border-red-200 rounded-2xl"><h2 class="text-red-600 font-bold text-lg mb-2">ERROR</h2><p class="text-xs text-slate-600 font-mono">${e.message}</p></div>`;
+    }
+}
 
 // --- INVENTORY MODULE ---
 async function renderInventory(c) {
@@ -199,10 +271,9 @@ window.deleteProduct = (id) => {
     });
 };
 
-// --- REPORTS (FIXED WITH ERROR DISPLAY) ---
+// --- REPORTS ---
 async function renderReports(c) {
     try {
-        // Hapa ndipo tunavutia data. Kama kuna error, itaenda kwenye 'catch'
         const { data: logs, error } = await supabase.from('transactions')
             .select(`
                 *, 
@@ -215,7 +286,7 @@ async function renderReports(c) {
             .order('created_at', { ascending: false })
             .limit(100);
 
-        if (error) throw error; // Tupa error kwa CATCH block
+        if (error) throw error;
 
         currentLogs = (profile.role === 'manager' || profile.role === 'finance') ? logs : logs.filter(l => l.from_location_id === profile.assigned_location_id || l.to_location_id === profile.assigned_location_id);
         const showFinancials = (profile.role === 'manager' || profile.role === 'finance');
@@ -225,8 +296,7 @@ async function renderReports(c) {
         c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1><div class="flex gap-2">${showFinancials ? `<button onclick="window.exportCSV()" class="btn-primary bg-green-700 hover:bg-green-800 text-xs px-4 flex gap-2 items-center">EXPORT CSV</button>` : ''}</div></div>${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">$${totalSales.toLocaleString()}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">$${totalProfit.toLocaleString()}</p></div></div>` : ''}<div class="flex flex-wrap gap-2 mb-6"><button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button><button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button><button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button><button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Time & Date</th><th class="text-xs font-bold text-slate-400 uppercase">User Identity</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
         window.filterLogs('all');
     } catch(e) { 
-        console.error("REPORT ERROR:", e); // Hii itaonekana kwa Console
-        // HII NDIO SEHEMU MPYA: ITAKUONYESHA ERROR HALISI KWENYE SCREEN
+        console.error("REPORT ERROR:", e);
         c.innerHTML = `<div class="p-12 text-center border-2 border-red-100 rounded-xl bg-red-50"><h3 class="text-red-600 font-bold text-lg mb-2">SYSTEM ERROR</h3><p class="text-slate-700 font-mono text-xs bg-white p-4 border rounded inline-block text-left shadow-sm">${e.message || JSON.stringify(e)}</p></div>`; 
     }
 }
@@ -333,7 +403,8 @@ window.execAddStock = async () => { try { const pid = document.getElementById('s
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
 window.execIssue = async (pId, fId) => { try { const qty = document.getElementById('tQty').value; if (!selectedDestinationId) return window.showNotification("Select Destination", "error"); if (!qty || qty <= 0) return window.showNotification("Enter Quantity", "error"); await transferStock(pId, fId, selectedDestinationId, qty, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Transfer Requested", "success"); router('inventory'); } catch(e){ window.showNotification(e.message, "error"); } };
 window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
+window.switchBar = (id) => { activePosLocationId = id; router('bar'); };
 window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart();}
 window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText='$0.00'; return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText='$'+sum.toFixed(2); }
 window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
-window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, profile.assigned_location_id, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
+window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
