@@ -12,10 +12,13 @@ let activePosLocationId = null;
 let baseCurrency = 'USD'; 
 let currencyRates = {};   
 let selectedCurrency = 'USD'; 
-const STRONG_CURRENCIES = ['USD', 'EUR', 'GBP']; // Hizi zina decimal places
-const SUPPORTED_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES']; // Hizi zote zitaonekana kwenye Dropdown
+const STRONG_CURRENCIES = ['USD', 'EUR', 'GBP'];
+const SUPPORTED_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES'];
 
-window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
+// --- HELPER TO CLOSE MODALS ---
+window.closeModalOutside = (e) => { 
+    if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; 
+};
 
 // --- NOTIFICATIONS ---
 window.showNotification = (message, type = 'success') => {
@@ -35,16 +38,19 @@ window.showConfirm = (title, desc, callback) => {
     document.getElementById('confirm-title').innerText = title;
     document.getElementById('confirm-desc').innerText = desc;
     document.getElementById('confirm-modal').style.display = 'flex';
+    
+    // Recreate button to remove old listeners
     const btn = document.getElementById('confirm-btn');
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
+    
     newBtn.addEventListener('click', async () => {
         document.getElementById('confirm-modal').style.display = 'none';
         await callback();
     });
 };
 
-// --- 💰 CURRENCY ENGINE (STRICT MODE) ---
+// --- 💰 CURRENCY ENGINE ---
 window.initCurrency = async () => {
     if (!profile) return;
     try {
@@ -73,7 +79,7 @@ window.convertAmount = (amount, fromCurr, toCurr) => {
     if (STRONG_CURRENCIES.includes(fromCurr) && !STRONG_CURRENCIES.includes(toCurr)) return amount * rate; 
     if (!STRONG_CURRENCIES.includes(fromCurr) && STRONG_CURRENCIES.includes(toCurr)) return amount / rate; 
     
-    return amount; 
+    return amount; // Fallback same strength
 };
 
 window.formatPrice = (amount) => {
@@ -89,19 +95,20 @@ window.formatPrice = (amount) => {
 
 window.changeCurrency = (curr) => {
     selectedCurrency = curr;
-    // Force refresh active view safely
     const activeEl = document.querySelector('.nav-item.nav-active');
     if(activeEl) router(activeEl.id.replace('nav-', ''));
 };
 
 window.getCurrencySelectorHTML = () => {
-    // Show ALL supported currencies, not just the ones with rates
     const options = SUPPORTED_CURRENCIES.map(c => `<option value="${c}" ${selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join('');
     return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`;
 };
 
 // --- INITIALIZATION ---
 window.onload = async () => {
+    // Attach Global Functions Explicitly (HII NDIO ILIKUWA INAKOSEKANA)
+    window.logout = logout;
+    
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
@@ -117,7 +124,7 @@ window.onload = async () => {
     try {
         await supabase.rpc('claim_my_invite', { email_to_check: session.user.email, user_id_to_link: session.user.id });
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        // Retry logic if profile creation is slow
+        
         if (!prof) {
             await new Promise(r => setTimeout(r, 1000));
             let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
@@ -136,13 +143,12 @@ window.onload = async () => {
             const userNameDisplay = document.querySelector('.font-bold.text-slate-700'); 
             if(userNameDisplay) userNameDisplay.innerText = profile.full_name;
         }
-        window.logoutAction = logout;
+        
         applyStrictPermissions(profile.role);
         router(profile.role === 'barman' ? 'bar' : 'inventory');
     } catch (e) { 
         console.error("Init Error:", e);
-        // Alert user if init fails completely
-        document.body.innerHTML = `<div class="p-10 text-center"><h1 class="text-xl font-bold text-red-600">Connection Error</h1><p class="text-sm text-gray-600">Failed to load profile. Please refresh.</p></div>`;
+        document.body.innerHTML = `<div class="p-10 text-center"><h1 class="text-xl font-bold text-red-600">System Error</h1><p class="text-sm text-gray-600">Please refresh the page.</p></div>`;
     }
 };
 
@@ -167,10 +173,7 @@ function applyStrictPermissions(role) {
 }
 
 window.router = async (view) => {
-    const sidebar = document.getElementById('sidebar');
-    if (window.innerWidth < 768 && sidebar) sidebar.classList.add('-translate-x-full');
     const app = document.getElementById('app-view');
-    // Show spinner
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
     
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active'));
@@ -185,8 +188,7 @@ window.router = async (view) => {
         else if (view === 'settings') await renderSettings(app);
     } catch (err) { 
         console.error("Router Error:", err);
-        // Show actual error on screen instead of blank screen
-        app.innerHTML = `<div class="p-10 text-center border-2 border-red-100 rounded-2xl bg-red-50"><h2 class="text-red-600 font-bold text-lg mb-2">System Error</h2><p class="text-xs font-mono text-slate-600">${err.message}</p><button onclick="location.reload()" class="mt-4 px-4 py-2 bg-slate-900 text-white rounded text-xs font-bold">RELOAD SYSTEM</button></div>`;
+        app.innerHTML = `<div class="p-10 text-center"><p class="text-red-500 font-bold">Error loading view.</p></div>`;
     }
 };
 
@@ -201,7 +203,6 @@ async function renderInventory(c) {
     let contentHTML = '';
     if (isPOView) {
         const { data: pos } = await supabase.from('purchase_orders').select('*').eq('organization_id', profile.organization_id).order('created_at', {ascending:false});
-        // Handle empty POs safely
         const safePos = pos || [];
         contentHTML = `<table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4">Date</th><th>Supplier</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody>
         ${safePos.length ? safePos.map(po => `<tr><td class="py-3 pl-4 text-xs font-bold text-slate-600">${new Date(po.created_at).toLocaleDateString()}</td><td class="text-xs uppercase font-bold text-slate-800">${po.supplier_name}</td><td class="text-xs font-mono font-bold">${window.formatPrice(po.total_cost)}</td><td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${po.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}">${po.status}</span></td><td>${po.status === 'Pending' ? `<button onclick="window.receivePO('${po.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded hover:bg-slate-700">RECEIVE</button>` : '<span class="text-slate-400 text-[10px]">DONE</span>'}</td></tr>`).join('') : '<tr><td colspan="5" class="p-8 text-center text-xs text-slate-400">No Purchase Orders found.</td></tr>'}</tbody></table>`;
@@ -222,7 +223,7 @@ async function renderInventory(c) {
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">${contentHTML}</div>`;
 }
 
-// --- REPORTS (CRASH PROOF) ---
+// --- REPORTS (WITH FILTERS) ---
 async function renderReports(c) {
     try {
         const isVarianceView = window.currentRepView === 'variance';
@@ -241,12 +242,9 @@ async function renderReports(c) {
             ${safeTakes.length ? safeTakes.map(t => `<tr><td class="py-3 pl-4 text-xs font-bold">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs uppercase">${t.locations?.name || '-'}</td><td class="text-xs">${t.profiles?.full_name || '-'}</td><td><span class="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-1 rounded">COMPLETED</span></td><td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px] underline">VIEW REPORT</button></td></tr>`).join('') : '<tr><td colspan="5" class="p-8 text-center text-xs text-slate-400">No stock takes recorded.</td></tr>'}
             </tbody></table></div>`;
         } else {
-            // SAFE DATA FETCHING
             const { data: logs, error } = await supabase.from('transactions').select(`*, products (name, category), locations:to_location_id (name), from_loc:from_location_id (name), profiles:user_id (full_name, role)`).eq('organization_id', profile.organization_id).order('created_at', { ascending: false }).limit(100);
             
             if (error) throw error;
-            
-            // PREVENT NULL CRASH: Initialize with empty array if null
             currentLogs = logs || [];
             
             const totalSales = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
@@ -257,6 +255,14 @@ async function renderReports(c) {
                 <div class="flex gap-2"><button class="px-4 py-2 text-xs font-bold rounded-full bg-slate-900 text-white">GENERAL</button><button onclick="window.currentRepView='variance'; router('reports')" class="px-4 py-2 text-xs font-bold rounded-full bg-white border text-slate-600">VARIANCE</button></div>
             </div>
             ${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">${window.formatPrice(totalProfit)}</p></div></div>` : ''}
+            
+            <div class="flex flex-wrap gap-2 mb-6">
+                <button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button>
+                <button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button>
+                <button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button>
+                <button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button>
+            </div>
+
             <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Date</th><th class="text-xs font-bold text-slate-400 uppercase">User</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
             window.filterLogs('all');
         }
@@ -264,11 +270,13 @@ async function renderReports(c) {
 }
 
 window.filterLogs=(t)=>{
-    // SAFE FILTERING: Check if currentLogs exists
     let f = currentLogs || [];
     if(t==='sale') f = f.filter(l=>l.type==='sale');
+    if(t==='transfer') f = f.filter(l=>['pending_transfer','transfer_completed'].includes(l.type));
+    if(t==='consumption') f = f.filter(l=>l.to_location_id && l.locations?.type === 'department');
+    
     const b = document.getElementById('logsBody');
-    if(!b) return; // Guard clause
+    if(!b) return;
     
     if(!f.length){b.innerHTML='<tr><td colspan="6" class="text-center text-xs text-gray-400 py-12">No records found.</td></tr>';return;}
     
@@ -346,7 +354,7 @@ window.viewVariance = async (id) => {
     html += `</tbody></table><button onclick="document.getElementById('modal').style.display='none'" class="btn-primary mt-4 w-full">Close</button>`; document.getElementById('modal-content').innerHTML = html; document.getElementById('modal').style.display = 'flex';
 };
 
-// --- SETTINGS ---
+// --- SETTINGS (UI FIX) ---
 async function renderSettings(c) {
     try {
         const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id);
@@ -402,6 +410,13 @@ window.approve=async(id,s)=>{if(confirm('Authorize?'))try{await respondToApprova
 async function renderStaff(c){ const{data:a}=await supabase.from('profiles').select('*').eq('organization_id',profile.organization_id); const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending'); c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`; }
 window.addProductModal=()=>{ if(profile.role !== 'manager') return; const currencyOptions = SUPPORTED_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3><div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-5 mb-4"><div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Food">Food (Kitchen)</option><option value="Beverage">Beverage (Bar)</option><option value="Supplies">Supplies</option><option value="Maintenance">Maintenance</option></select></div><div class="input-group mb-0"><label class="input-label">Unit</label><select id="pUnit" class="input-field"><option value="Pcs">Pieces</option><option value="Box">Box/Crate</option><option value="Kg">Kilograms</option><option value="Ltr">Liters</option></select></div></div><div class="input-group mb-4"><label class="input-label">Input Currency</label><select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">${currencyOptions}</select><p class="text-[10px] text-slate-400 mt-1">* Auto-converts to ${baseCurrency}</p></div><div class="grid grid-cols-2 gap-5 mb-8"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field" placeholder="0.00"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field" placeholder="0.00"></div></div><button onclick="window.execAddProduct()" class="btn-primary">Save Product</button>`; document.getElementById('modal').style.display = 'flex'; };
 window.execAddProduct=async()=>{ try { const name = document.getElementById('pN').value.toUpperCase(); const category = document.getElementById('pCat').value; const unit = document.getElementById('pUnit').value; const inputCurrency = document.getElementById('pCurrency').value; let cost = parseFloat(document.getElementById('pC').value); let selling = parseFloat(document.getElementById('pS').value); if (!name || isNaN(cost) || isNaN(selling)) return window.showNotification("Invalid details", "error"); const costBase = window.convertAmount(cost, inputCurrency, baseCurrency); const sellingBase = window.convertAmount(selling, inputCurrency, baseCurrency); if (costBase === null) throw new Error(`Missing exchange rate for ${inputCurrency}`); await supabase.from('products').insert({ name: name, category: category, unit: unit, cost_price: costBase, selling_price: sellingBase, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification(`Saved ${name}`, "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
+window.addStockModal=()=>{ if(profile.role !== 'manager') return; const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name'); const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).order('name'); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-8 uppercase text-center">Receive from Supplier</h3><div class="input-group"><label class="input-label">Item</label><select id="sP" class="input-field cursor-pointer">${prods.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Store</label><select id="sL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div><button onclick="window.execAddStock()" class="btn-primary mt-6">Confirm Entry</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); const { error } = await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: profile.organization_id }); if(error) throw error; await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Updated Successfully", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
+window.issueModal = async (name, id, fromLoc) => { selectedDestinationId = null; let { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc); if(profile.role === 'storekeeper') locs = locs.filter(l => l.type === 'department'); const gridHTML = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border border-slate-200 p-4 rounded-xl cursor-pointer hover:border-slate-900 hover:bg-slate-50 transition flex flex-col items-center justify-center gap-1 text-center"><span class="font-bold text-xs uppercase text-slate-800">${l.name}</span><span class="text-[9px] font-bold text-slate-400 tracking-wider uppercase">${l.type.replace('_',' ')}</span></div>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Move Stock</h3><div class="input-group mb-6"><label class="input-label">Product</label><input value="${name}" disabled class="input-field bg-slate-50 uppercase text-slate-500 font-bold"></div><div class="mb-6"><label class="input-label mb-3 block">Select Destination</label><div class="grid grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">${gridHTML || '<p class="text-xs text-slate-400 col-span-2 text-center py-4">No destinations available.</p>'}</div></div><div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field" placeholder="0"></div><button onclick="window.execIssue('${id}','${fromLoc}')" class="btn-primary mt-4">Request Transfer</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => { c.classList.remove('bg-slate-900', 'border-slate-900', 'text-white'); c.querySelector('span').classList.remove('text-white'); c.querySelectorAll('span')[1].classList.remove('text-slate-300'); c.classList.add('border-slate-200', 'hover:border-slate-900', 'hover:bg-slate-50'); c.querySelector('span').classList.add('text-slate-800'); c.querySelectorAll('span')[1].classList.add('text-slate-400'); }); el.classList.remove('border-slate-200', 'hover:border-slate-900', 'hover:bg-slate-50'); el.classList.add('bg-slate-900', 'border-slate-900'); el.querySelector('span').classList.remove('text-slate-800'); el.querySelector('span').classList.add('text-white'); el.querySelectorAll('span')[1].classList.remove('text-slate-400'); el.querySelectorAll('span')[1].classList.add('text-slate-300'); selectedDestinationId = id; };
+window.execIssue = async (pId, fId) => { try { const qty = document.getElementById('tQty').value; if (!selectedDestinationId) return window.showNotification("Select Destination", "error"); if (!qty || qty <= 0) return window.showNotification("Enter Quantity", "error"); await transferStock(pId, fId, selectedDestinationId, qty, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Transfer Requested", "success"); router('inventory'); } catch(e){ window.showNotification(e.message, "error"); } };
+window.inviteModal = async () => { const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-8 uppercase text-center">Invite Staff</h3><div class="input-group"><label class="input-label">Email</label><input id="iE" class="input-field" placeholder="email@company.com"></div><div class="input-group"><label class="input-label">Role</label><select id="iR" class="input-field cursor-pointer"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div><div class="input-group"><label class="input-label">Assign Location</label><select id="iL" class="input-field cursor-pointer">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div><button onclick="window.execInvite()" class="btn-primary mt-6">Send Invitation</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
 window.addStoreModal=()=>{ document.getElementById('modal-content').innerHTML=`<h3 class="font-bold text-lg mb-8 uppercase text-center">Add Hub</h3><div class="input-group"><label class="input-label">Name</label><input id="nN" class="input-field"></div><div class="input-group"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div><button onclick="window.execAddStore()" class="btn-primary mt-6">Create</button>`; document.getElementById('modal').style.display = 'flex'; };
 window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
 window.switchBar = (id) => { activePosLocationId = id; router('bar'); };
@@ -409,3 +424,32 @@ window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else ca
 window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText=window.formatPrice(0); return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText=window.formatPrice(sum); }
 window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
 window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
+
+// --- ATTACH GLOBALS MANUALLY (THE FIX) ---
+// Hii inahakikisha HTML inaona functions hizi
+window.addProductModal = window.addProductModal;
+window.execAddProduct = window.execAddProduct;
+window.addStockModal = window.addStockModal;
+window.execAddStock = window.execAddStock;
+window.issueModal = window.issueModal;
+window.selectDest = window.selectDest;
+window.execIssue = window.execIssue;
+window.inviteModal = window.inviteModal;
+window.execInvite = window.execInvite;
+window.addStoreModal = window.addStoreModal;
+window.execAddStore = window.execAddStore;
+window.switchBar = window.switchBar;
+window.addCart = window.addCart;
+window.renderCart = window.renderCart;
+window.remCart = window.remCart;
+window.checkout = window.checkout;
+window.createPOModal = window.createPOModal;
+window.execCreatePO = window.execCreatePO;
+window.receivePO = window.receivePO;
+window.newStockTakeModal = window.newStockTakeModal;
+window.startStockTake = window.startStockTake;
+window.saveStockTake = window.saveStockTake;
+window.viewVariance = window.viewVariance;
+window.saveRates = window.saveRates;
+window.filterLogs = window.filterLogs;
+window.changeCurrency = window.changeCurrency;
