@@ -29,14 +29,14 @@ window.showNotification = (message, type = 'success') => {
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 500); }, 3000);
 };
 
-// 🔥 FIXED CONFIRM MODAL (Hii ndiyo inatibu vitufe vya Receive/Approve)
+// --- PREMIUM CONFIRM (Used for Approve, Receive, Charge) ---
 window.premiumConfirm = (title, desc, btnText, callback) => {
     document.getElementById('confirm-title').innerText = title;
     document.getElementById('confirm-desc').innerText = desc;
     const btn = document.getElementById('confirm-btn');
     btn.innerText = btnText;
     
-    // KUVUNJA UHUSIANO WA ZAMANI (Clone Node)
+    // Reset buttons logic (Clone to remove old listeners)
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
     
@@ -48,7 +48,7 @@ window.premiumConfirm = (title, desc, btnText, callback) => {
     });
 };
 
-// 🔥 FIXED PROFILE VIEWER (Bofya Jina Uone Details)
+// --- PROFILE VIEWER ---
 window.viewUserProfile = async (userId) => {
     if(!userId) return;
     try {
@@ -61,14 +61,13 @@ window.viewUserProfile = async (userId) => {
         document.getElementById('pv-role').innerText = `${user.role} • ${assignedLoc}`;
         document.getElementById('pv-initials').innerText = (user.full_name || 'U').charAt(0).toUpperCase();
         document.getElementById('pv-phone').innerText = user.phone || 'Not Provided';
-        // Hapa tunaweza kuweka email halisi kama unayo kwenye profiles, la sivyo placeholder
         document.getElementById('pv-email').innerText = 'Staff Member'; 
 
         document.getElementById('profile-viewer').style.display = 'flex';
     } catch(e) { console.error(e); }
 };
 
-// --- INITIALIZATION (STRICT CHECK FOR NAME & PHONE) ---
+// --- INITIALIZATION ---
 window.onload = async () => {
     window.logoutAction = logout;
     const session = await getSession();
@@ -76,6 +75,7 @@ window.onload = async () => {
 
     try {
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        // Retry logic just in case
         if (!prof) {
             await new Promise(r => setTimeout(r, 1000));
             let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
@@ -85,17 +85,17 @@ window.onload = async () => {
         
         window.profile = prof;
         
-        // Cache Locations
+        // Load Locations & Currency
         const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
         window.cachedLocations = locs || [];
-
         await window.initCurrency();
         
-        // 🔥 STRICT ENFORCEMENT: JINA NA SIMU LAZIMA VIWEPO
+        // CHECK: Name & Phone exist?
         if (!window.profile.full_name || window.profile.full_name.length < 3 || !window.profile.phone) {
             document.getElementById('name-modal').style.display = 'flex';
         }
 
+        // Permissions
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
         if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
@@ -116,8 +116,7 @@ window.saveName = async () => {
     
     await supabase.from('profiles').update({ full_name: name, phone: phone }).eq('id', window.profile.id);
     document.getElementById('name-modal').style.display = 'none';
-    window.showNotification("Profile Complete", "success");
-    setTimeout(() => location.reload(), 1000);
+    location.reload();
 };
 
 // --- CURRENCY ---
@@ -173,6 +172,7 @@ window.router = async (view) => {
     const navEl = document.getElementById(`nav-${view}`);
     if(navEl) navEl.classList.add('nav-active');
 
+    // Slight delay to allow UI to breathe
     setTimeout(async () => {
         try {
             if (view === 'inventory') await window.renderInventory(app);
@@ -188,7 +188,9 @@ window.router = async (view) => {
     }, 50);
 };
 
-// --- 1. INVENTORY ---
+// ================= MODULES =================
+
+// 1. INVENTORY
 window.renderInventory = async (c) => {
     const isPOView = window.currentInvView === 'po'; 
     const stock = await getInventory(window.profile.organization_id);
@@ -196,7 +198,6 @@ window.renderInventory = async (c) => {
     const showPrice = window.profile.role === 'manager' || window.profile.role === 'finance';
 
     let content = '';
-    
     if (isPOView) {
         const { data: pos } = await supabase.from('purchase_orders').select('*').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
         content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="py-4 pl-4 text-xs text-slate-400 uppercase tracking-widest">Date</th><th class="text-xs text-slate-400 uppercase tracking-widest">Supplier</th><th class="text-xs text-slate-400 uppercase tracking-widest">Total</th><th class="text-xs text-slate-400 uppercase tracking-widest">Status</th><th class="text-xs text-slate-400 uppercase tracking-widest">Action</th></tr></thead><tbody>
@@ -232,7 +233,7 @@ window.renderInventory = async (c) => {
     <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
 };
 
-// --- 2. BAR (POS) ---
+// 2. BAR (POS)
 window.renderBar = async (c) => {
     const inv = await getInventory(window.profile.organization_id);
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department');
@@ -289,7 +290,7 @@ window.renderCart = () => {
 window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.renderCart(); };
 window.confirmCheckout = () => {
     if(!window.cart.length) return;
-    window.premiumConfirm("Complete Sale?", "Confirm charging this amount to the current stock.", "Charge", window.doCheckout);
+    window.premiumConfirm("Confirm Sale", "Process this transaction?", "Charge", window.doCheckout);
 };
 window.doCheckout = async () => {
     try {
@@ -301,7 +302,7 @@ window.doCheckout = async () => {
     } catch(e) { window.showNotification(e.message, "error"); }
 };
 
-// --- 3. APPROVALS ---
+// 3. APPROVALS
 window.renderApprovals = async (c) => {
     if(window.profile.role === 'storekeeper') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
     const reqs = await getPendingApprovals(window.profile.organization_id);
@@ -325,7 +326,7 @@ window.renderApprovals = async (c) => {
 };
 window.confirmApprove = (id) => { window.premiumConfirm("Authorize Transfer?", "This will move stock between locations permanently.", "Authorize", async () => { try{await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Transfer Authorized", "success"); window.router('approvals');}catch(e){window.showNotification(e.message,"error");} }); };
 
-// --- 4. REPORTS ---
+// 4. REPORTS
 window.renderReports = async (c) => {
     const isVariance = window.currentRepView === 'variance';
     
@@ -415,6 +416,18 @@ window.exportCSV = () => {
 
 window.confirmReceive = (id) => { window.premiumConfirm("Confirm Receipt", "Are you sure you have physically received these items?", "Receive Stock", () => window.receivePO(id)); };
 
+// 5. STAFF
+window.renderStaff = async (c) => {
+    const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', window.profile.organization_id);
+    const { data: inv } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
+    c.innerHTML = `
+    <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">+ INVITE</button></div>
+    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>
+    ${staff.map(s => `<tr class="border-b"><td class="p-4 font-bold text-sm uppercase text-slate-700">${s.full_name}</td><td class="text-xs uppercase font-bold text-blue-600">${s.role}</td><td class="text-right p-4"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}
+    ${inv.map(i => `<tr class="bg-yellow-50 border-b"><td class="p-4 text-sm font-medium text-slate-600">${i.email}</td><td class="text-xs uppercase text-slate-400">${i.role}</td><td class="text-right p-4"><span class="text-[9px] bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-bold">PENDING</span></td></tr>`).join('')}
+    </tbody></table></div>`;
+};
+
 window.inviteModal = async () => {
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
     document.getElementById('modal-content').innerHTML = `
@@ -433,6 +446,48 @@ window.execInvite = async () => {
     document.getElementById('modal').style.display = 'none';
     window.showNotification("Sent", "success");
     window.router('staff');
+};
+
+// 6. SETTINGS
+window.renderSettings = async (c) => {
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
+    const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id);
+    const rateMap = {};
+    if(rates) rates.forEach(r => rateMap[r.currency_code] = r.rate);
+    const rateRows = ['TZS', 'USD', 'EUR', 'GBP', 'KES'].map(code => {
+        const isBase = code === window.baseCurrency;
+        const val = isBase ? 1 : (rateMap[code] || '');
+        return `<div class="flex justify-between items-center border-b py-3 last:border-0"><div class="flex gap-3 items-center"><div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold">${code[0]}</div><div><p class="font-bold text-sm">${code}</p><p class="text-[10px] text-slate-400 font-bold">${isBase?'Base':'Foreign'}</p></div></div><div>${isBase?'<span class="font-mono px-4 text-slate-400">1.00</span>':`<input id="rate-${code}" type="number" value="${val}" placeholder="Rate..." class="w-24 border rounded px-2 py-1 text-right font-mono font-bold text-sm">`}</div></div>`;
+    }).join('');
+
+    c.innerHTML = `
+    <h1 class="text-3xl font-bold uppercase text-slate-900 mb-8">Settings</h1>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="bg-white rounded-2xl border shadow-sm p-6">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">+ ADD</button></div>
+            <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type}</td><td class="text-right"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}</tbody></table>
+        </div>
+        <div class="bg-white rounded-2xl border shadow-sm p-6">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
+            ${rateRows}
+            <button onclick="window.saveRates()" class="btn-primary mt-6">UPDATE RATES</button>
+        </div>
+    </div>`;
+};
+
+window.saveRates = async () => {
+    const updates = [];
+    ['TZS', 'USD', 'EUR', 'GBP', 'KES'].forEach(code => {
+        if (code === window.baseCurrency) return;
+        const val = document.getElementById(`rate-${code}`).value;
+        if(val) updates.push({ organization_id: window.profile.organization_id, currency_code: code, rate: parseFloat(val) });
+    });
+    if(!updates.length) return;
+    const { error } = await supabase.from('exchange_rates').upsert(updates, { onConflict: 'organization_id, currency_code' });
+    if(error) return window.showNotification("Error updating rates", "error");
+    await window.initCurrency();
+    window.showNotification("Rates Updated", "success");
+    window.renderSettings(document.getElementById('app-view'));
 };
 
 window.addStoreModal = () => {
@@ -487,7 +542,6 @@ window.execCreatePO = async () => {
 };
 
 window.receivePO = async (id) => {
-    // Note: confirmReceive uses premiumConfirm now
     const { data: items } = await supabase.from('po_items').select('*').eq('po_id', id);
     const { data: mainStore } = await supabase.from('locations').select('id').eq('organization_id', window.profile.organization_id).eq('type', 'main_store').single();
     
@@ -553,39 +607,39 @@ window.execIssue = async (pid, fromLoc) => {
     } catch(e) { window.showNotification(e.message, "error"); }
 };
 
-window.inviteModal = async () => {
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
+window.addProductModal = () => {
+    if(window.profile.role !== 'manager') return;
+    const opts = SUPPORTED_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
     document.getElementById('modal-content').innerHTML = `
-    <h3 class="font-bold text-lg mb-6 uppercase text-center">Invite Staff</h3>
-    <div class="input-group"><label class="input-label">Email</label><input id="iE" class="input-field"></div>
-    <div class="input-group"><label class="input-label">Role</label><select id="iR" class="input-field"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div>
-    <div class="input-group"><label class="input-label">Assign</label><select id="iL" class="input-field">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
-    <button onclick="window.execInvite()" class="btn-primary">SEND INVITE</button>`;
+    <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
+    <div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
+    <div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Food">Food</option><option value="Beverage">Beverage</option><option value="Supplies">Supplies</option></select></div>
+        <div class="input-group mb-0"><label class="input-label">Unit</label><select id="pUnit" class="input-field"><option value="Pcs">Pcs</option><option value="Kg">Kg</option><option value="Ltr">Ltr</option><option value="Box">Box</option></select></div>
+    </div>
+    <div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">${opts}</select></div>
+    <div class="grid grid-cols-2 gap-4 mb-6"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
+    <button onclick="window.execAddProduct()" class="btn-primary">SAVE PRODUCT</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
-window.execInvite = async () => {
-    const email = document.getElementById('iE').value;
-    if(!email) return;
-    await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: window.profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' });
-    document.getElementById('modal').style.display = 'none';
-    window.showNotification("Sent", "success");
-    window.router('staff');
-};
+window.execAddProduct = async () => {
+    const name = document.getElementById('pN').value.toUpperCase();
+    const cat = document.getElementById('pCat').value;
+    const unit = document.getElementById('pUnit').value;
+    const curr = document.getElementById('pCurrency').value;
+    const cost = parseFloat(document.getElementById('pC').value);
+    const selling = parseFloat(document.getElementById('pS').value);
+    
+    if(!name || isNaN(cost)) return window.showNotification("Invalid input", "error");
+    const costBase = window.convertAmount(cost, curr, window.baseCurrency);
+    const sellingBase = window.convertAmount(selling, curr, window.baseCurrency);
+    if(costBase === null) return window.showNotification(`Set rate for ${curr} first`, "error");
 
-window.addStoreModal = () => {
-    document.getElementById('modal-content').innerHTML = `
-    <h3 class="font-bold text-lg mb-6 uppercase text-center">Add Location</h3>
-    <div class="input-group"><label class="input-label">Name</label><input id="nN" class="input-field"></div>
-    <div class="input-group"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div>
-    <button onclick="window.execAddStore()" class="btn-primary">CREATE</button>`;
-    document.getElementById('modal').style.display = 'flex';
-};
-
-window.execAddStore = async () => {
-    await createLocation(window.profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value);
+    await supabase.from('products').insert({ name, category: cat, unit, cost_price: costBase, selling_price: sellingBase, organization_id: window.profile.organization_id });
     document.getElementById('modal').style.display = 'none';
-    window.router('settings');
+    window.showNotification("Product Added", "success");
+    window.router('inventory');
 };
 
 // Stock Take
