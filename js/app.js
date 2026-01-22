@@ -11,7 +11,7 @@ let activePosLocationId = null;
 
 // --- CURRENCY STATE ---
 let currencyRates = { USD: 1 }; 
-let selectedCurrency = 'USD'; // Default
+let selectedCurrency = 'USD'; // Default Display Currency
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
@@ -59,7 +59,6 @@ window.initCurrency = async () => {
     }
 
     try {
-        // Hii API ni Free, haina Key, inavuta data za Benki Kuu za Dunia
         const response = await fetch('https://open.er-api.com/v6/latest/USD');
         const data = await response.json();
         
@@ -93,7 +92,6 @@ window.formatPrice = (usdAmount) => {
 
 window.changeCurrency = (curr) => {
     selectedCurrency = curr;
-    // Refresh view current ili bei zibadilike
     const activeNav = document.querySelector('.nav-item.nav-active');
     if (activeNav) {
         const viewId = activeNav.id.replace('nav-', '');
@@ -113,15 +111,12 @@ window.getCurrencySelectorHTML = () => {
 
 // --- INITIALIZATION ---
 window.onload = async () => {
-    // Inject CSS
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
 
-    // Washa Currency Engine Kabla ya Kitu Chochote
     await window.initCurrency();
 
-    // Mobile Menu Logic
     const mobileBtn = document.getElementById('mobile-menu-btn');
     const sidebar = document.getElementById('sidebar');
     if(mobileBtn && sidebar) {
@@ -409,16 +404,40 @@ async function renderSettings(c){
     c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;
 }
 
-// --- MODALS ---
+// --- MODALS (UPDATED FOR CURRENCY INPUT) ---
 window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
+    
+    // Dropdown ya Currency (Kusaidia kuingiza data)
+    const currencyOptions = `
+        <option value="USD">USD ($)</option>
+        <option value="TZS">TZS (Sh)</option>
+        <option value="KES">KES (KSh)</option>
+        <option value="EUR">EUR (€)</option>
+    `;
+
     document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-8 uppercase text-center">New Product</h3>
+        <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
+        
         <div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
-        <div class="grid grid-cols-2 gap-5 mb-8"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
-        <button onclick="window.execAddProduct()" class="btn-primary">Save</button>`;
+        
+        <div class="input-group">
+            <label class="input-label">Input Currency</label>
+            <select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">
+                ${currencyOptions}
+            </select>
+            <p class="text-[10px] text-slate-400 mt-1">* System will convert this to USD automatically.</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-5 mb-8">
+            <div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field" placeholder="0.00"></div>
+            <div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field" placeholder="0.00"></div>
+        </div>
+        
+        <button onclick="window.execAddProduct()" class="btn-primary">Save Product</button>`;
     document.getElementById('modal').style.display = 'flex'; 
 };
+
 window.addStockModal = async () => {
     if(profile.role !== 'manager') return;
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
@@ -490,7 +509,38 @@ window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document
 window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
 window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
 
-window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
+// --- EXEC ADD PRODUCT (UPDATED LOGIC) ---
+window.execAddProduct = async () => { 
+    try { 
+        const name = document.getElementById('pN').value.toUpperCase();
+        const inputCurrency = document.getElementById('pCurrency').value; // Currency uliyochagua
+        let cost = parseFloat(document.getElementById('pC').value);
+        let selling = parseFloat(document.getElementById('pS').value);
+
+        if (!name || isNaN(cost) || isNaN(selling)) return window.showNotification("Invalid details", "error");
+
+        // --- CONVERSION LOGIC ---
+        // Tunagawanya na Rate ili kupata USD halisi kabla ya kutuma Supabase
+        const rate = currencyRates[inputCurrency] || 1;
+        const costUSD = cost / rate;
+        const sellingUSD = selling / rate;
+
+        await supabase.from('products').insert({ 
+            name: name, 
+            cost_price: costUSD,     // Save as USD
+            selling_price: sellingUSD, // Save as USD
+            organization_id: profile.organization_id,
+            unit: 'pcs' 
+        }); 
+
+        document.getElementById('modal').style.display = 'none'; 
+        window.showNotification(`Saved (Converted to USD ${sellingUSD.toFixed(2)})`, "success"); 
+        router('inventory'); 
+    } catch(e) { 
+        window.showNotification(e.message, "error"); 
+    } 
+};
+
 window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); const { error } = await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: profile.organization_id }); if(error) throw error; await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Updated Successfully", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
 window.execIssue = async (pId, fId) => { try { const qty = document.getElementById('tQty').value; if (!selectedDestinationId) return window.showNotification("Select Destination", "error"); if (!qty || qty <= 0) return window.showNotification("Enter Quantity", "error"); await transferStock(pId, fId, selectedDestinationId, qty, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Transfer Requested", "success"); router('inventory'); } catch(e){ window.showNotification(e.message, "error"); } };
