@@ -14,7 +14,7 @@
         ::-webkit-scrollbar-thumb { background: #94A3B8; border-radius: 10px; }
         
         /* MODALS */
-        #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer { display: none; }
+        #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer, #amend-modal { display: none; }
         
         .modal-box { background: white; width: 100%; max-width: 520px; border-radius: 24px; padding: 32px; position: relative; overflow: visible !important; }
         .animate-pop { animation: pop 0.2s ease-out forwards; }
@@ -142,6 +142,28 @@
                 <input id="userPhoneInput" class="input-field text-center font-bold" placeholder="Phone Number" type="tel">
             </div>
             <button onclick="window.saveName()" class="btn-primary mt-6">Save & Continue</button>
+        </div>
+    </div>
+
+    <div id="amend-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-pop">
+            <h3 class="font-bold text-lg mb-6 uppercase text-center text-slate-900">Amend Transaction</h3>
+            <input type="hidden" id="editTxId">
+            <div class="space-y-4">
+                <div class="input-group">
+                    <label class="input-label">Quantity</label>
+                    <input id="editQty" type="number" class="input-field font-mono font-bold">
+                    <p class="text-[10px] text-red-500 mt-1">Warning: Changing this updates stock levels.</p>
+                </div>
+                <div class="input-group">
+                    <label class="input-label">Total Value</label>
+                    <input id="editVal" type="number" class="input-field font-mono font-bold">
+                </div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="document.getElementById('amend-modal').style.display='none'" class="flex-1 py-3 text-xs font-bold uppercase border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">Cancel</button>
+                <button onclick="window.saveTransactionEdit()" class="flex-1 py-3 text-xs font-bold uppercase bg-[#0F172A] text-white rounded-xl hover:bg-slate-800 shadow-lg">Save Changes</button>
+            </div>
         </div>
     </div>
 
