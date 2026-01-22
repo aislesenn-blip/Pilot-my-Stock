@@ -2,17 +2,17 @@ import { getSession, logout } from './auth.js';
 import { getInventory, createLocation, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
-let profile = null;
-let cart = [];
+let profile = null; 
+let cart = []; 
 let currentLogs = [];
-let selectedDestinationId = null;
-let currentActionId = null;
-let activePosLocationId = null;
+let selectedDestinationId = null; 
+let currentActionId = null; 
+let activePosLocationId = null; 
 
 // --- CURRENCY ENGINE STATE ---
-let baseCurrency = 'USD'; // Itabadilika baada ya ku-fetch kutoka DB
-let currencyRates = {};   // Itajaa rates ambazo Manager ameweka (Manual)
-let selectedCurrency = 'USD'; // Currency inayoonekana kwa sasa
+let baseCurrency = 'USD'; // Default, itaupdatewa na initCurrency
+let currencyRates = {};   // Hapa ndipo rates za manual zinapoingia
+let selectedCurrency = 'USD'; // Hii ni kwa ajili ya kuona (Display)
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
@@ -23,7 +23,7 @@ window.showNotification = (message, type = 'success') => {
     const div = document.createElement('div');
     div.id = 'notif-toast';
     div.className = `fixed top-5 right-5 px-6 py-4 rounded-xl text-white font-bold shadow-2xl z-[10000] flex items-center gap-3 transition-all duration-300 transform translate-y-0`;
-    div.style.backgroundColor = type === 'success' ? '#0f172a' : '#ef4444';
+    div.style.backgroundColor = type === 'success' ? '#0f172a' : '#ef4444'; 
     div.innerHTML = `<span>${message}</span>`;
     document.body.appendChild(div);
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 300); }, 3000);
@@ -50,36 +50,35 @@ window.initCurrency = async () => {
     if (!profile) return;
 
     try {
-        // 1. Vuta Base Currency ya Kampuni (TZS, USD, nk)
+        // 1. Vuta Base Currency ya Kampuni
         const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', profile.organization_id).single();
         if (org) {
             baseCurrency = org.base_currency;
-            selectedCurrency = baseCurrency; // Default view ni Base Currency
+            selectedCurrency = baseCurrency; // Anza na currency ya kampuni
         }
 
         // 2. Vuta Rates za Ofisi (Manual Rates)
         const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', profile.organization_id);
         
-        // Reset Rates
         currencyRates = {};
         
-        // Panga rates: Mfano { USD: 2600, EUR: 2800 }
+        // Panga rates (Mfano: { USD: 2600, EUR: 2800 })
         if (rates && rates.length > 0) {
             rates.forEach(r => {
                 currencyRates[r.currency_code] = r.rate;
             });
         }
         
-        // Base currency always 1
+        // Base currency rate is ALWAYS 1
         currencyRates[baseCurrency] = 1;
 
-        console.log(`System Currency: ${baseCurrency}`, currencyRates);
+        console.log(`System Base: ${baseCurrency}`, currencyRates);
     } catch (e) {
         console.error("Currency Init Error:", e);
     }
 };
 
-// Logic ya Kubadili Bei kwenye Display
+// Logic ya Kubadili Bei kwenye Display (Inventory/POS)
 window.formatPrice = (amount) => {
     if (!amount && amount !== 0) return '-';
     
@@ -90,11 +89,11 @@ window.formatPrice = (amount) => {
         return `${baseCurrency} ${Number(amount).toLocaleString()}`;
     }
 
-    // 2. Kama anaangalia Foreign Currency (Mfano USD), GAWANYA kwa Rate
+    // 2. Kama anaangalia Foreign Currency, GAWANYA kwa Rate
     // Mfano: Base TZS 5200 / Rate 2600 = 2 USD
     const rate = currencyRates[selectedCurrency];
     
-    if (!rate || rate === 0) return 'Rate N/A'; // Rate haijawekwa na Manager
+    if (!rate || rate === 0) return 'Rate N/A'; // Rate haijawekwa Settings
 
     const converted = amount / rate;
     return `${selectedCurrency} ${converted.toFixed(2)}`;
@@ -102,6 +101,7 @@ window.formatPrice = (amount) => {
 
 window.changeCurrency = (curr) => {
     selectedCurrency = curr;
+    // Refresh view iliyopo active
     const activeNav = document.querySelector('.nav-item.nav-active');
     if (activeNav) {
         const viewId = activeNav.id.replace('nav-', '');
@@ -110,8 +110,10 @@ window.changeCurrency = (curr) => {
 };
 
 window.getCurrencySelectorHTML = () => {
-    // Dropdown inajengwa kulingana na Base Currency + Rates zilizopo
     const commonCurrencies = ['TZS', 'USD', 'EUR', 'KES', 'GBP'];
+    // Hakikisha Base Currency ipo kwenye list
+    if(!commonCurrencies.includes(baseCurrency)) commonCurrencies.unshift(baseCurrency);
+
     const options = commonCurrencies.map(c => 
         `<option value="${c}" ${selectedCurrency === c ? 'selected' : ''}>${c}</option>`
     ).join('');
@@ -152,7 +154,7 @@ window.onload = async () => {
         profile = prof;
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
 
-        // Fetch Currency Settings NOW that we have profile
+        // Initialize Currency Engine
         await window.initCurrency();
 
         const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
@@ -413,16 +415,123 @@ async function renderStaff(c){
     const{data:p}=await supabase.from('staff_invites').select('*').eq('organization_id',profile.organization_id).eq('status','pending');
     c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Invite</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${a.map(s=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold uppercase py-3 pl-4 text-slate-700">${s.full_name}</td><td class="text-xs font-bold text-blue-600 uppercase">${s.role}</td><td class="text-right pr-4 text-green-500 font-bold text-[10px] uppercase">ACTIVE</td></tr>`).join('')}${p.map(i=>`<tr class="bg-yellow-50"><td class="text-sm font-medium text-slate-600 py-3 pl-4">${i.email}</td><td class="text-xs font-bold text-slate-400 uppercase">${i.role}</td><td class="text-right pr-4 text-yellow-600 font-bold text-[10px] uppercase">PENDING</td></tr>`).join('')}</tbody></table></div></div>`;
 }
-async function renderSettings(c){
-    const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);
-    
-    // --- SETTINGS VIEW (Weka button ya kubadili rates hapa kama utahitaji) ---
-    c.innerHTML=`
-        <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div>
-        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-8"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>
+
+// --- SETTINGS MODULE (UPDATED WITH RATES MANAGER) ---
+async function renderSettings(c) {
+    try {
+        // 1. Vuta Locations
+        const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id);
         
+        // 2. Vuta Rates zilizopo Database
+        const { data: existingRates } = await supabase.from('exchange_rates').select('*').eq('organization_id', profile.organization_id);
+        
+        // Panga rates kwenye object
+        const rateMap = {};
+        if(existingRates) existingRates.forEach(r => rateMap[r.currency_code] = r.rate);
+
+        // Orodha ya Currency tunazotaka kusupport (Ongeza unazotaka hapa)
+        const supportedCurrencies = ['TZS', 'USD', 'EUR', 'GBP', 'KES'];
+
+        // Jenga HTML ya Rates
+        const ratesHTML = supportedCurrencies.map(code => {
+            const isBase = code === baseCurrency;
+            const currentVal = isBase ? 1 : (rateMap[code] || ''); // Kama ni Base ni 1, vinginevyo onyesha iliyopo
+            
+            return `
+            <div class="flex items-center justify-between border-b border-slate-50 last:border-0 py-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center font-bold text-[10px] text-slate-600">${code.substring(0,1)}</div>
+                    <div>
+                        <p class="font-bold text-sm text-slate-700">${code}</p>
+                        <p class="text-[10px] text-slate-400 font-medium">${isBase ? 'Base Currency' : 'Foreign'}</p>
+                    </div>
+                </div>
+                <div>
+                    ${isBase 
+                        ? `<span class="font-mono font-bold text-slate-300 px-4">1.00</span>` 
+                        : `<input id="rate-${code}" type="number" step="0.01" value="${currentVal}" placeholder="Ex. 2600" class="w-32 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-right font-mono font-bold text-slate-800 focus:border-slate-900 outline-none transition text-sm">`
+                    }
+                </div>
+            </div>`;
+        }).join('');
+
+        c.innerHTML = `
+            <div class="flex justify-between items-center mb-8">
+                <h1 class="text-3xl font-bold uppercase text-slate-900">Settings</h1>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-fit">
+                    <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+                        <h3 class="font-bold text-sm uppercase text-slate-800">Business Locations</h3>
+                        <button onclick="window.addStoreModal()" class="text-[10px] font-bold bg-slate-900 text-white px-3 py-1.5 rounded hover:bg-slate-700">+ ADD NEW</button>
+                    </div>
+                    <div class="p-0">
+                        <table class="w-full text-left">
+                            <tbody>
+                                ${locs.map(x => `
+                                <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50">
+                                    <td class="font-bold text-sm text-slate-700 py-4 pl-6">${x.name}</td>
+                                    <td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td>
+                                    <td class="text-right pr-6"><span class="bg-green-50 text-green-600 px-2 py-1 rounded text-[9px] font-bold">ACTIVE</span></td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-fit">
+                    <div class="p-6 border-b border-slate-100 bg-slate-50/50">
+                        <h3 class="font-bold text-sm uppercase text-slate-800">Exchange Rates</h3>
+                        <p class="text-[10px] text-slate-500 mt-1">1 ${baseCurrency} = How much in other currencies? (For input only)</p>
+                    </div>
+                    <div class="p-6 pt-2">
+                        ${ratesHTML}
+                        <button onclick="window.saveRates()" class="btn-primary w-full mt-6 justify-center">Update Rates</button>
+                    </div>
+                </div>
+
+            </div>
         `;
+    } catch(e) {
+        console.error(e);
+        c.innerHTML = `<div class="p-10 text-red-500">Error loading settings.</div>`;
+    }
 }
+
+// --- FUNCTION YA KU-SAVE RATES ---
+window.saveRates = async () => {
+    const supportedCurrencies = ['TZS', 'USD', 'EUR', 'GBP', 'KES'];
+    const updates = [];
+
+    // Loop na kusanya data
+    for (const code of supportedCurrencies) {
+        if (code === baseCurrency) continue; // Ruka base currency
+
+        const input = document.getElementById(`rate-${code}`);
+        if (input && input.value) {
+            updates.push({
+                organization_id: profile.organization_id,
+                currency_code: code,
+                rate: parseFloat(input.value)
+            });
+        }
+    }
+
+    if (updates.length === 0) return window.showNotification("No rates to update", "error");
+
+    try {
+        const { error } = await supabase.from('exchange_rates').upsert(updates, { onConflict: 'organization_id, currency_code' });
+        if (error) throw error;
+
+        await window.initCurrency(); // Refresh system rates immediately
+        window.showNotification("Rates Updated Successfully", "success");
+        renderSettings(document.getElementById('app-view')); // Refresh UI
+    } catch(e) {
+        window.showNotification(e.message, "error");
+    }
+};
 
 // --- MODALS (SMART CURRENCY INPUT) ---
 window.addProductModal = () => { 
