@@ -14,37 +14,37 @@
         ::-webkit-scrollbar-thumb { background: #94A3B8; border-radius: 10px; }
         
         /* MODALS */
-        #modal, #name-modal, #confirm-modal, #edit-modal, #profile-viewer { display: none; }
+        #modal, #name-modal, #confirm-modal, #supplier-modal, #profile-viewer { display: none; }
         
-        .modal-box { background: white; width: 100%; max-width: 480px; border-radius: 24px; padding: 32px; position: relative; overflow: visible !important; }
-        
-        /* PREMIUM ANIMATION */
+        .modal-box { background: white; width: 100%; max-width: 520px; border-radius: 24px; padding: 32px; position: relative; overflow: visible !important; }
         .animate-pop { animation: pop 0.2s ease-out forwards; }
         @keyframes pop { 0% { transform: scale(0.95); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 
-        .input-group { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
-        .input-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748B; }
-        .input-field { border: 1px solid #CBD5E1; padding: 12px; border-radius: 10px; width: 100%; outline: none; }
-        .btn-primary { background: #0F172A; color: #fff; padding: 14px; border-radius: 10px; font-weight: 600; width: 100%; }
+        .input-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+        .input-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748B; letter-spacing: 0.5px; }
+        .input-field { border: 1px solid #E2E8F0; padding: 12px; border-radius: 12px; width: 100%; outline: none; transition: 0.2s; background: #F8FAFC; font-weight: 500; font-size: 14px; }
+        .input-field:focus { border-color: #0F172A; background: #fff; box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.1); }
+        .btn-primary { background: #0F172A; color: #fff; padding: 14px; border-radius: 12px; font-weight: 600; width: 100%; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; transition: 0.2s; }
+        .btn-primary:hover { background: #1E293B; transform: translateY(-1px); }
     </style>
 </head>
 
 <body class="flex h-screen overflow-x-hidden bg-[#F8FAFC]">
 
-    <div id="toast-container" class="fixed top-5 right-5 z-[11000] flex flex-col gap-2"></div>
+    <div id="toast-container" class="fixed top-6 right-6 z-[11000] flex flex-col gap-3"></div>
 
-    <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-gray-200 flex flex-col transform -translate-x-full md:translate-x-0 transition-transform duration-300">
-        <div class="h-20 flex items-center justify-between px-8 border-b border-gray-100">
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-gray-200 flex flex-col transform -translate-x-full md:translate-x-0 transition-transform duration-300 shadow-xl md:shadow-none">
+        <div class="h-24 flex items-center justify-between px-8 border-b border-gray-50">
             <span class="font-bold text-xl tracking-tight text-slate-900">PILOT MY STOCK.</span>
             <button id="close-sidebar" class="md:hidden text-slate-400 hover:text-red-600 p-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
-        <nav class="flex-1 px-4 space-y-2 overflow-y-auto py-8" id="menu">
-            <button onclick="window.router('inventory')" id="nav-inventory" class="nav-item w-full flex items-center gap-4 px-5 py-3.5 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg> Inventory</button>
-            <button onclick="window.router('bar')" id="nav-bar" class="nav-item w-full flex items-center gap-4 px-5 py-3.5 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg> Bar & POS</button>
-            <button onclick="window.router('approvals')" id="nav-approvals" class="nav-item w-full flex items-center gap-4 px-5 py-3.5 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Approvals</button>
-            <button onclick="window.router('reports')" id="nav-reports" class="nav-item w-full flex items-center gap-4 px-5 py-3.5 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Reports</button>
-            <button onclick="window.router('staff')" id="nav-staff" class="nav-item w-full flex items-center gap-4 px-5 py-3.5 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg> Team</button>
-            <button onclick="window.router('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-4 px-5 py-3.5 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> Settings</button>
+        <nav class="flex-1 px-4 space-y-1 overflow-y-auto py-6" id="menu">
+            <button onclick="window.router('inventory')" id="nav-inventory" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg> Inventory</button>
+            <button onclick="window.router('bar')" id="nav-bar" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg> Bar & POS</button>
+            <button onclick="window.router('approvals')" id="nav-approvals" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Approvals</button>
+            <button onclick="window.router('reports')" id="nav-reports" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Reports</button>
+            <button onclick="window.router('staff')" id="nav-staff" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg> Team</button>
+            <button onclick="window.router('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> Settings</button>
         </nav>
         <div class="p-8 border-t border-gray-100"><button onclick="window.logoutAction()" class="w-full text-xs font-bold text-slate-400 hover:text-red-600 uppercase tracking-widest transition flex items-center justify-center gap-2">Sign Out</button></div>
     </aside>
@@ -59,6 +59,24 @@
 
     <div id="modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4" onclick="window.closeModalOutside(event)">
         <div class="modal-box animate-pop" id="modal-content" onclick="event.stopPropagation()"></div>
+    </div>
+
+    <div id="supplier-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-lg rounded-3xl p-8 shadow-2xl animate-pop">
+            <h3 class="font-bold text-lg mb-6 uppercase text-center text-slate-900">Register Supplier</h3>
+            <div class="space-y-4">
+                <div class="input-group"><label class="input-label">Company Name</label><input id="supName" class="input-field uppercase" placeholder="e.g. Serengeti Breweries"></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="input-group"><label class="input-label">TIN Number</label><input id="supTIN" class="input-field font-mono" placeholder="000-000-000"></div>
+                    <div class="input-group"><label class="input-label">Contact</label><input id="supPhone" class="input-field" placeholder="Phone / Email"></div>
+                </div>
+                <div class="input-group"><label class="input-label">Physical Address</label><textarea id="supAddr" class="input-field h-24 resize-none" placeholder="Box 123, Industrial Area..."></textarea></div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="document.getElementById('supplier-modal').style.display='none'" class="flex-1 py-3 text-xs font-bold uppercase border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">Cancel</button>
+                <button onclick="window.saveSupplier()" class="flex-1 py-3 text-xs font-bold uppercase bg-[#0F172A] text-white rounded-xl hover:bg-slate-800 shadow-lg">Save Record</button>
+            </div>
+        </div>
     </div>
 
     <div id="confirm-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
@@ -85,6 +103,7 @@
             <div class="pt-12 pb-8 px-8 text-center">
                 <h2 id="pv-name" class="text-xl font-bold text-slate-900">User Name</h2>
                 <span id="pv-role" class="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-bold uppercase rounded-full mt-2 inline-block">Role</span>
+                <span id="pv-status" class="block mt-2 text-[10px] font-bold uppercase text-slate-400">STATUS: ACTIVE</span>
                 <div class="mt-6 text-left space-y-3">
                     <div class="p-3 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Email</p><p id="pv-email" class="text-sm font-bold text-slate-800">user@email.com</p></div>
                     <div class="p-3 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Phone</p><p id="pv-phone" class="text-sm font-bold text-slate-800">Not Provided</p></div>
@@ -115,9 +134,7 @@
             const links = document.querySelectorAll('.nav-item');
             if (mobileBtn && sidebar) mobileBtn.onclick = (e) => { e.stopPropagation(); sidebar.classList.remove('-translate-x-full'); };
             if (closeBtn && sidebar) closeBtn.onclick = () => sidebar.classList.add('-translate-x-full');
-            document.addEventListener('click', (e) => {
-                if (window.innerWidth < 768 && sidebar && !sidebar.contains(e.target) && !mobileBtn.contains(e.target)) sidebar.classList.add('-translate-x-full');
-            });
+            document.addEventListener('click', (e) => { if (window.innerWidth < 768 && sidebar && !sidebar.contains(e.target) && !mobileBtn.contains(e.target)) sidebar.classList.add('-translate-x-full'); });
             links.forEach(link => link.addEventListener('click', () => { if (window.innerWidth < 768) sidebar.classList.add('-translate-x-full'); }));
         });
     </script>
