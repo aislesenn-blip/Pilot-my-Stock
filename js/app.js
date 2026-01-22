@@ -5,70 +5,122 @@ import { supabase } from './supabase.js';
 // --- GLOBAL VARIABLES ---
 window.profile = null;
 window.currentLogs = [];
-window.cart = []; 
-window.baseCurrency = 'USD'; 
-window.currencyRates = {};   
-window.selectedCurrency = 'USD'; 
+window.cart = [];
+window.baseCurrency = 'USD';
+window.currencyRates = {};
+window.selectedCurrency = 'USD';
 window.activePosLocationId = null;
-window.cachedLocations = []; // 🔥 HII MPYA: Kwa ajili ya kutambua majina ya stoo kwenye report
+window.cachedLocations = [];
 
 const STRONG_CURRENCIES = ['USD', 'EUR', 'GBP'];
 const SUPPORTED_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES'];
 
-// --- PREMIUM UTILITIES (Hizi zinatibu UI bila kuguza Logic) ---
-window.closeModalOutside = (e) => { 
-    if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; 
+// --- PREMIUM UTILITIES ---
+window.closeModalOutside = (e) => {
+    if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none';
 };
 
 window.showNotification = (message, type = 'success') => {
     const container = document.getElementById('toast-container');
     const div = document.createElement('div');
-    div.className = `px-6 py-4 rounded-2xl text-white font-bold shadow-2xl flex items-center gap-3 transition-all duration-500 transform translate-y-0 ${type === 'success' ? 'bg-[#0F172A]' : 'bg-red-600'}`;
+    div.className = `px-6 py-4 rounded-xl text-white font-bold shadow-2xl flex items-center gap-3 transition-all duration-300 transform translate-y-0 ${type === 'success' ? 'bg-[#0F172A]' : 'bg-red-600'}`;
     div.innerHTML = `<span>${message}</span>`;
     container.appendChild(div);
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 500); }, 3000);
 };
 
-// 🔥 HII NDIO MPYA: Badala ya ile 'confirm()' ya kizamani
+// 🔥 FIXED CONFIRM MODAL (Hii ndiyo inatibu vitufe vya Receive/Approve)
 window.premiumConfirm = (title, desc, btnText, callback) => {
-    document.getElementById('action-title').innerText = title;
-    document.getElementById('action-desc').innerText = desc;
-    const btn = document.getElementById('action-btn');
+    document.getElementById('confirm-title').innerText = title;
+    document.getElementById('confirm-desc').innerText = desc;
+    const btn = document.getElementById('confirm-btn');
     btn.innerText = btnText;
     
-    // Reset button listeners
+    // KUVUNJA UHUSIANO WA ZAMANI (Clone Node)
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
     
-    document.getElementById('action-modal').style.display = 'flex';
+    document.getElementById('confirm-modal').style.display = 'flex';
     
     newBtn.addEventListener('click', async () => {
-        document.getElementById('action-modal').style.display = 'none';
+        document.getElementById('confirm-modal').style.display = 'none';
         await callback();
     });
 };
 
-// 🔥 HII NDIO MPYA: Kuona Profile ya mtu (Detailed)
+// 🔥 FIXED PROFILE VIEWER (Bofya Jina Uone Details)
 window.viewUserProfile = async (userId) => {
     if(!userId) return;
     try {
         const { data: user } = await supabase.from('profiles').select('*').eq('id', userId).single();
         if(!user) return;
         
-        // Tafuta jina la stoo aliyo-assigned
         const assignedLoc = window.cachedLocations.find(l => l.id === user.assigned_location_id)?.name || 'Unassigned';
 
         document.getElementById('pv-name').innerText = user.full_name || 'Unknown';
         document.getElementById('pv-role').innerText = `${user.role} • ${assignedLoc}`;
         document.getElementById('pv-initials').innerText = (user.full_name || 'U').charAt(0).toUpperCase();
-        document.getElementById('pv-phone').innerText = user.phone || 'Not Listed';
-        document.getElementById('pv-email').innerText = "System User"; 
+        document.getElementById('pv-phone').innerText = user.phone || 'Not Provided';
+        // Hapa tunaweza kuweka email halisi kama unayo kwenye profiles, la sivyo placeholder
+        document.getElementById('pv-email').innerText = 'Staff Member'; 
 
         document.getElementById('profile-viewer').style.display = 'flex';
     } catch(e) { console.error(e); }
 };
 
-// --- CURRENCY LOGIC (Hii ni ileile yako ya zamani) ---
+// --- INITIALIZATION (STRICT CHECK FOR NAME & PHONE) ---
+window.onload = async () => {
+    window.logoutAction = logout;
+    const session = await getSession();
+    if (!session) { window.location.href = 'index.html'; return; }
+
+    try {
+        let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        if (!prof) {
+            await new Promise(r => setTimeout(r, 1000));
+            let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+            prof = retry.data;
+        }
+        if (!prof || !prof.organization_id) { window.location.href = 'setup.html'; return; }
+        
+        window.profile = prof;
+        
+        // Cache Locations
+        const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
+        window.cachedLocations = locs || [];
+
+        await window.initCurrency();
+        
+        // 🔥 STRICT ENFORCEMENT: JINA NA SIMU LAZIMA VIWEPO
+        if (!window.profile.full_name || window.profile.full_name.length < 3 || !window.profile.phone) {
+            document.getElementById('name-modal').style.display = 'flex';
+        }
+
+        const role = window.profile.role;
+        const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
+        if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
+        else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
+        else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
+
+        window.router(role === 'barman' ? 'bar' : 'inventory');
+
+    } catch (e) { console.error(e); }
+};
+
+window.saveName = async () => {
+    const name = document.getElementById('userNameInput').value;
+    const phone = document.getElementById('userPhoneInput').value;
+    
+    if (name.length < 3) return window.showNotification("Enter Full Name", "error");
+    if (phone.length < 9) return window.showNotification("Enter Valid Phone", "error");
+    
+    await supabase.from('profiles').update({ full_name: name, phone: phone }).eq('id', window.profile.id);
+    document.getElementById('name-modal').style.display = 'none';
+    window.showNotification("Profile Complete", "success");
+    setTimeout(() => location.reload(), 1000);
+};
+
+// --- CURRENCY ---
 window.initCurrency = async () => {
     if (!window.profile) return;
     try {
@@ -81,7 +133,7 @@ window.initCurrency = async () => {
         window.currencyRates = {};
         window.currencyRates[window.baseCurrency] = 1;
         if (rates && rates.length > 0) rates.forEach(r => window.currencyRates[r.currency_code] = Number(r.rate));
-    } catch (e) { console.error("Currency Error:", e); }
+    } catch (e) { console.error(e); }
 };
 
 window.convertAmount = (amount, fromCurr, toCurr) => {
@@ -112,57 +164,6 @@ window.getCurrencySelectorHTML = () => {
     return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`;
 };
 
-// --- INITIALIZATION (Updated to Cache Locations & Check Phone) ---
-window.onload = async () => {
-    window.logoutAction = logout;
-    const session = await getSession();
-    if (!session) { window.location.href = 'index.html'; return; }
-
-    try {
-        let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        if (!prof) {
-            await new Promise(r => setTimeout(r, 1000));
-            let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-            prof = retry.data;
-        }
-        if (!prof || !prof.organization_id) { window.location.href = 'setup.html'; return; }
-        
-        window.profile = prof;
-
-        // 🔥 FETCH LOCATIONS (Muhimu kwa report context)
-        const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
-        window.cachedLocations = locs || [];
-
-        await window.initCurrency();
-        
-        // Permissions Logic (Yako ya zamani)
-        const role = window.profile.role;
-        const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
-        if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
-        else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
-        else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
-
-        // Check Name & Phone (Premium Setup)
-        if ((window.profile.full_name || '').length < 3) document.getElementById('name-modal').style.display = 'flex';
-
-        window.router(role === 'barman' ? 'bar' : 'inventory');
-
-    } catch (e) { console.error("Boot Error:", e); }
-};
-
-// Updated Save Name (Includes Phone)
-window.saveName = async () => {
-    const name = document.getElementById('userNameInput').value;
-    const phone = document.getElementById('userPhoneInput').value;
-    
-    if (name.length < 3) return window.showNotification("Invalid Name", "error");
-    if (phone.length < 9) return window.showNotification("Invalid Phone", "error");
-
-    await supabase.from('profiles').update({ full_name: name, phone: phone }).eq('id', window.profile.id);
-    document.getElementById('name-modal').style.display = 'none';
-    location.reload();
-};
-
 // --- ROUTER ---
 window.router = async (view) => {
     const app = document.getElementById('app-view');
@@ -187,9 +188,7 @@ window.router = async (view) => {
     }, 50);
 };
 
-// ================= MODULES =================
-
-// 1. INVENTORY (Added Premium Confirm for Receive)
+// --- 1. INVENTORY ---
 window.renderInventory = async (c) => {
     const isPOView = window.currentInvView === 'po'; 
     const stock = await getInventory(window.profile.organization_id);
@@ -197,30 +196,43 @@ window.renderInventory = async (c) => {
     const showPrice = window.profile.role === 'manager' || window.profile.role === 'finance';
 
     let content = '';
+    
     if (isPOView) {
         const { data: pos } = await supabase.from('purchase_orders').select('*').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
-        content = `<table class="w-full text-left"><thead class="bg-slate-50 border-b"><tr><th class="py-3 pl-4">Date</th><th>Supplier</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>
-        ${(pos||[]).map(p => `<tr><td class="py-3 pl-4 text-xs font-bold">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-xs font-bold uppercase">${p.supplier_name}</td><td class="text-xs font-mono">${window.formatPrice(p.total_cost)}</td><td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${p.status==='Pending'?'bg-yellow-100 text-yellow-800':'bg-green-100 text-green-800'}">${p.status}</span></td><td>${p.status==='Pending'?`<button onclick="window.confirmReceive('${p.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded">RECEIVE</button>`:'-'}</td></tr>`).join('')}
-        </tbody></table>`;
+        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="py-4 pl-4 text-xs text-slate-400 uppercase tracking-widest">Date</th><th class="text-xs text-slate-400 uppercase tracking-widest">Supplier</th><th class="text-xs text-slate-400 uppercase tracking-widest">Total</th><th class="text-xs text-slate-400 uppercase tracking-widest">Status</th><th class="text-xs text-slate-400 uppercase tracking-widest">Action</th></tr></thead><tbody>
+        ${(pos||[]).map(p => `
+        <tr class="border-b border-slate-50 hover:bg-slate-50 transition">
+            <td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td>
+            <td class="text-sm font-bold text-slate-800 uppercase">${p.supplier_name}</td>
+            <td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td>
+            <td><span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${p.status==='Pending'?'bg-yellow-50 text-yellow-600 border border-yellow-100':'bg-green-50 text-green-600 border border-green-100'}">${p.status}</span></td>
+            <td>${p.status==='Pending'?`<button onclick="window.confirmReceive('${p.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition shadow-sm font-bold">RECEIVE</button>`:'<span class="text-slate-300 text-[10px] font-bold">COMPLETED</span>'}</td>
+        </tr>`).join('')}</tbody></table>`;
     } else {
-        content = `<table class="w-full text-left"><thead class="bg-slate-50 border-b"><tr><th class="py-3 pl-4">Item</th>${showPrice?`<th>Cost</th><th>Price</th>`:''}<th>Store</th><th>Qty</th><th>Action</th></tr></thead><tbody>
-        ${filteredStock.map(i => `<tr><td class="py-3 pl-4"><div class="font-bold uppercase text-xs">${i.products?.name}</div><div class="text-[9px] text-slate-400 font-bold uppercase">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs font-bold">${window.formatPrice(i.products.selling_price)}</td>`:''} <td class="text-xs font-bold text-gray-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg">${i.quantity} <span class="text-[9px] text-slate-400">${i.products?.unit}</span></td><td class="text-right pr-4">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold border px-3 py-1 rounded hover:bg-slate-50">MOVE</button>`:''}</td></tr>`).join('')}
-        </tbody></table>`;
+        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="py-4 pl-4 text-xs text-slate-400 uppercase tracking-widest">Item</th>${showPrice?`<th class="text-xs text-slate-400 uppercase tracking-widest">Cost</th><th class="text-xs text-slate-400 uppercase tracking-widest">Price</th>`:''} <th class="text-xs text-slate-400 uppercase tracking-widest">Store</th><th class="text-xs text-slate-400 uppercase tracking-widest">Stock</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th></tr></thead><tbody>
+        ${filteredStock.map(i => `
+        <tr class="border-b border-slate-50 hover:bg-slate-50 transition group">
+            <td class="py-4 pl-4"><div class="font-bold text-slate-800 uppercase text-sm">${i.products?.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">${i.products?.category}</div></td>
+            ${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs font-bold text-slate-900">${window.formatPrice(i.products.selling_price)}</td>`:''} 
+            <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name}</td>
+            <td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td>
+            <td class="text-right pr-6">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold border border-slate-200 text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-900 hover:text-white hover:border-slate-900 transition uppercase tracking-wider">Move</button>`:''}</td>
+        </tr>`).join('')}</tbody></table>`;
     }
 
     c.innerHTML = `
-    <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-8">
-        <div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div>
-        <div class="flex gap-2 bg-slate-100 p-1 rounded-full">
-            <button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-5 py-2 text-xs font-bold rounded-full ${!isPOView?'bg-white shadow text-slate-900':'text-slate-500'}">STOCK</button>
-            <button onclick="window.currentInvView='po'; window.router('inventory')" class="px-5 py-2 text-xs font-bold rounded-full ${isPOView?'bg-white shadow text-slate-900':'text-slate-500'}">LPO</button>
+    <div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8">
+        <div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div>
+        <div class="flex gap-1 bg-slate-100 p-1.5 rounded-xl">
+            <button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button>
+            <button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button>
         </div>
-        <div class="flex gap-2">${window.profile.role==='manager'?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-4 bg-blue-600">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-4">New Item</button>`:''}</div>
+        <div class="flex gap-3">${window.profile.role==='manager'?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div>
     </div>
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">${content}</div>`;
+    <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
 };
 
-// 2. BAR (Logic Yako ya Zamani 100%)
+// --- 2. BAR (POS) ---
 window.renderBar = async (c) => {
     const inv = await getInventory(window.profile.organization_id);
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department');
@@ -229,21 +241,38 @@ window.renderBar = async (c) => {
     else if (!window.activePosLocationId && locs.length) window.activePosLocationId = locs[0].id;
 
     const items = inv.filter(x => x.location_id === window.activePosLocationId && (x.products.category === 'Beverage' || !x.products.category));
-    const storeSelect = (window.profile.role !== 'barman') ? `<select onchange="window.switchBar(this.value)" class="bg-white border rounded px-3 py-2 text-sm font-bold mb-4">${locs.map(l => `<option value="${l.id}" ${window.activePosLocationId===l.id?'selected':''}>${l.name}</option>`).join('')}</select>` : '';
+
+    const storeSelect = (window.profile.role !== 'barman') ? 
+        `<div class="mb-8 flex items-center gap-4"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Active Counter:</span>
+        <select onchange="window.switchBar(this.value)" class="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer shadow-sm min-w-[200px]">${locs.map(l => `<option value="${l.id}" ${window.activePosLocationId===l.id?'selected':''}>${l.name}</option>`).join('')}</select></div>` : '';
 
     c.innerHTML = `
     ${storeSelect}
-    <div class="flex flex-col lg:flex-row gap-6 h-[calc(100vh-140px)]">
-        <div class="flex-1 overflow-y-auto">
-            <div class="flex justify-between items-center mb-4 sticky top-0 bg-slate-50 py-2 z-10"><h1 class="text-2xl font-bold uppercase">POS Terminal</h1>${window.getCurrencySelectorHTML()}</div>
-            <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-                ${items.map(x => `<div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-4 border rounded-xl cursor-pointer hover:border-slate-900 transition relative overflow-hidden shadow-sm"><div class="absolute top-0 right-0 bg-slate-100 px-2 py-1 text-[10px] font-bold rounded-bl-lg">Qty: ${x.quantity}</div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">${x.products.name}</p><p class="text-lg font-bold text-slate-900">${window.formatPrice(x.products.selling_price)}</p></div>`).join('')}
+    <div class="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)]">
+        <div class="flex-1 overflow-y-auto pr-2">
+            <div class="flex justify-between items-center mb-6 sticky top-0 bg-[#F8FAFC] py-2 z-10"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">POS Terminal</h1>${window.getCurrencySelectorHTML()}</div>
+            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">
+                ${items.length ? items.map(x => `
+                <div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-5 rounded-2xl border border-slate-100 cursor-pointer hover:border-slate-900 transition-all duration-200 hover:shadow-lg hover:-translate-y-1 group relative overflow-hidden">
+                    <div class="flex justify-between items-start mb-2">
+                        <div class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 font-bold text-[10px] group-hover:bg-slate-900 group-hover:text-white transition">${x.products.name.charAt(0)}</div>
+                        <span class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full border border-slate-100 group-hover:border-slate-200">Qty: ${x.quantity}</span>
+                    </div>
+                    <p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 truncate">${x.products.name}</p>
+                    <p class="text-lg font-bold text-slate-900 font-mono">${window.formatPrice(x.products.selling_price)}</p>
+                </div>`).join('') : '<div class="col-span-full py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl"><p class="text-slate-400 font-bold text-sm uppercase">No products available here.</p></div>'}
             </div>
         </div>
-        <div class="w-full lg:w-96 bg-white border rounded-2xl p-6 h-full flex flex-col shadow-xl">
-            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-sm uppercase">Ticket</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500">CLEAR</button></div>
-            <div id="cart-list" class="flex-1 overflow-y-auto space-y-2"></div>
-            <div class="pt-4 border-t mt-auto"><div class="flex justify-between text-xl font-bold mb-4"><span>Total</span><span id="cart-total">${window.formatPrice(0)}</span></div><button onclick="window.confirmCheckout()" class="btn-primary py-4 text-sm shadow-lg">CHARGE</button></div>
+        <div class="w-full lg:w-96 bg-white border border-slate-200 rounded-[32px] p-8 h-full flex flex-col shadow-2xl shadow-slate-200/50">
+            <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase text-slate-900 tracking-widest">Current Order</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded transition">CLEAR ALL</button></div>
+            <div id="cart-list" class="flex-1 overflow-y-auto space-y-3 pr-1"></div>
+            <div class="pt-6 border-t border-slate-100 mt-auto">
+                <div class="flex justify-between items-end mb-6">
+                    <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Amount</span>
+                    <span id="cart-total" class="text-3xl font-bold text-slate-900 font-mono">${window.formatPrice(0)}</span>
+                </div>
+                <button onclick="window.confirmCheckout()" class="w-full bg-[#0F172A] text-white py-4 rounded-2xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 shadow-xl shadow-slate-900/20 active:scale-95 transition">Charge Sale</button>
+            </div>
         </div>
     </div>`;
     window.renderCart();
@@ -254,51 +283,63 @@ window.addCart = (n,p,id) => { if(!window.cart) window.cart=[]; const x=window.c
 window.renderCart = () => { 
     const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); 
     let sum=0; 
-    l.innerHTML=(window.cart||[]).map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold p-2 bg-slate-50 rounded border border-slate-100"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500">X</button></div>`}).join(''); 
+    l.innerHTML=(window.cart||[]).map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group"><div class="flex flex-col"><span class="text-xs font-bold text-slate-800 uppercase">${i.name}</span><span class="text-[10px] text-slate-400 font-mono">${window.formatPrice(i.price)} x ${i.qty}</span></div><button onclick="window.remCart('${i.id}')" class="w-6 h-6 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-100 hover:text-red-500 transition">✕</button></div>`}).join(''); 
     t.innerText=window.formatPrice(sum); 
 };
 window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.renderCart(); };
-// 🔥 NEW: Premium Checkout Confirmation
 window.confirmCheckout = () => {
     if(!window.cart.length) return;
-    window.premiumConfirm("Confirm Sale", "Process this transaction?", "Charge", window.doCheckout);
+    window.premiumConfirm("Complete Sale?", "Confirm charging this amount to the current stock.", "Charge", window.doCheckout);
 };
 window.doCheckout = async () => {
     try {
         await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id); 
-        window.showNotification("Sale Complete", "success"); 
-        window.cart=[]; window.renderCart(); window.router('bar');
+        window.showNotification("Sale Completed Successfully", "success"); 
+        window.cart=[]; 
+        window.renderCart(); 
+        window.router('bar');
     } catch(e) { window.showNotification(e.message, "error"); }
 };
 
-// 3. APPROVALS (Added Premium Confirm)
+// --- 3. APPROVALS ---
 window.renderApprovals = async (c) => {
-    if(window.profile.role === 'storekeeper') return c.innerHTML = '<div class="p-10 text-center">Access Denied</div>';
+    if(window.profile.role === 'storekeeper') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
     const reqs = await getPendingApprovals(window.profile.organization_id);
     c.innerHTML = `
-    <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Pending Approvals</h1>
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>
-    ${reqs.length ? reqs.map(r => `<tr class="border-b"><td class="p-4 font-bold text-sm uppercase">${r.products?.name}</td><td class="text-blue-600 font-mono font-bold">${r.quantity}</td><td class="text-xs uppercase text-slate-500">To: ${r.to_loc?.name}</td><td class="text-right p-4"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded font-bold">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs text-slate-400">No pending requests.</td></tr>'}
+    <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1>
+    <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>
+    ${reqs.length ? reqs.map(r => `
+    <tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition">
+        <td class="p-6">
+            <div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div>
+            <div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div>
+        </td>
+        <td class="p-6">
+            <div class="text-blue-600 font-mono font-bold text-lg">${r.quantity}</div>
+            <div class="text-xs text-slate-400 uppercase mt-1">Requested Qty</div>
+        </td>
+        <td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td>
+        <td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg shadow-slate-900/10">AUTHORIZE</button></td>
+    </tr>`).join('') : '<tr><td colspan="4" class="p-12 text-center text-xs font-bold text-slate-300 uppercase tracking-widest">No pending requests found.</td></tr>'}
     </tbody></table></div>`;
 };
-window.confirmApprove = (id) => { window.premiumConfirm("Approve Transfer", "Authorize this stock movement?", "Authorize", async () => { try{await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Approved","success"); window.router('approvals');}catch(e){window.showNotification(e.message,"error");} }); };
+window.confirmApprove = (id) => { window.premiumConfirm("Authorize Transfer?", "This will move stock between locations permanently.", "Authorize", async () => { try{await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Transfer Authorized", "success"); window.router('approvals');}catch(e){window.showNotification(e.message,"error");} }); };
 
-// 4. REPORTS (🔥 HAPA NDIPO KUNA MABADILIKO MAKUBWA: Detailed)
+// --- 4. REPORTS ---
 window.renderReports = async (c) => {
     const isVariance = window.currentRepView === 'variance';
-    const showFinancials = (window.profile.role === 'manager' || window.profile.role === 'finance');
-
+    
     if(isVariance) {
         const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name, role, phone, id, assigned_location_id)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
         c.innerHTML = `
         <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Reconciliation</h1>
-            <div class="flex gap-2 bg-slate-100 p-1 rounded-full"><button onclick="window.currentRepView='general'; window.router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500">GENERAL</button><button class="px-5 py-2 text-xs font-bold rounded-full bg-white shadow text-slate-900">VARIANCE</button></div>
-            <button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-slate-900">NEW STOCK TAKE</button>
+            <div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button onclick="window.currentRepView='general'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">GENERAL</button><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">VARIANCE</button></div>
+            <button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-red-600 hover:bg-red-700">NEW COUNT</button>
         </div>
-        <div class="bg-white rounded-2xl border shadow-sm"><table class="w-full text-left"><thead><tr class="bg-slate-50 border-b"><th class="p-3 text-xs uppercase">Date</th><th>Location</th><th>User</th><th>Action</th></tr></thead><tbody>
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead><tr class="bg-slate-50 border-b border-slate-100"><th class="p-4 text-xs text-slate-400 uppercase">Date</th><th class="text-xs text-slate-400 uppercase">Location</th><th class="text-xs text-slate-400 uppercase">Conducted By</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Report</th></tr></thead><tbody>
         ${(takes||[]).map(t => {
             const locName = window.cachedLocations.find(l => l.id === t.profiles?.assigned_location_id)?.name || 'Unassigned';
-            return `<tr><td class="p-3 text-xs font-bold">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs uppercase">${t.locations?.name}</td><td class="text-xs"><button onclick="window.viewUserProfile('${t.conducted_by}')" class="font-bold text-slate-900 hover:text-blue-600 transition flex flex-col text-left"><span class="uppercase">${t.profiles?.full_name}</span><span class="text-[9px] text-slate-400 uppercase tracking-wider">${t.profiles?.role} &bull; ${locName}</span></button></td><td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px] underline">VIEW</button></td></tr>`;
+            return `<tr><td class="p-4 text-xs font-bold text-slate-500">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs font-bold uppercase text-slate-800">${t.locations?.name}</td><td class="text-xs"><button onclick="window.viewUserProfile('${t.conducted_by}')" class="font-bold text-slate-900 hover:text-blue-600 transition flex flex-col text-left"><span class="uppercase">${t.profiles?.full_name}</span><span class="text-[9px] text-slate-400 uppercase tracking-wider">${t.profiles?.role} &bull; ${locName}</span></button></td><td class="text-right pr-6"><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px] hover:underline">VIEW</button></td></tr>`;
         }).join('')}
         </tbody></table></div>`;
     } else {
@@ -308,18 +349,17 @@ window.renderReports = async (c) => {
         const totalProfit = window.currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
 
         c.innerHTML = `
-        <div class="flex justify-between items-center mb-8 gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1>${showFinancials ? window.getCurrencySelectorHTML() : ''}</div>
-            <div class="flex gap-2 bg-slate-100 p-1 rounded-full"><button class="px-5 py-2 text-xs font-bold rounded-full bg-white shadow text-slate-900">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500 hover:text-slate-700">VARIANCE</button></div>
-            <button onclick="window.exportCSV()" class="btn-primary w-auto px-4 bg-green-700 hover:bg-green-800">EXPORT CSV</button>
+        <div class="flex justify-between items-center mb-8 gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Reports</h1>${window.getCurrencySelectorHTML()}</div>
+            <div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">VARIANCE</button></div>
+            <button onclick="window.exportCSV()" class="btn-primary w-auto px-6 bg-green-700 hover:bg-green-800">EXPORT CSV</button>
         </div>
-        ${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Total Revenue</p><p class="text-3xl font-mono font-bold text-slate-900">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Gross Profit</p><p class="text-3xl font-mono font-bold text-green-600">${window.formatPrice(totalProfit)}</p></div></div>` : ''}
-        <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
-            <button onclick="window.filterLogs('all')" class="px-4 py-1.5 bg-slate-900 text-white text-[10px] font-bold rounded-full">ALL</button>
-            <button onclick="window.filterLogs('sale')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full">SALES</button>
-            <button onclick="window.filterLogs('transfer')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full">TRANSFERS</button>
-            <button onclick="window.filterLogs('consumption')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full">CONSUMPTION</button>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Revenue</p><p class="text-4xl font-mono font-bold text-slate-900">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-mono font-bold text-green-600">${window.formatPrice(totalProfit)}</p></div></div>
+        <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
+            <button onclick="window.filterLogs('all')" class="px-5 py-2 bg-slate-900 text-white text-[10px] font-bold rounded-full shadow-lg shadow-slate-900/20">ALL TRANSACTIONS</button>
+            <button onclick="window.filterLogs('sale')" class="px-5 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold rounded-full hover:bg-slate-50 hover:text-slate-900 transition">SALES</button>
+            <button onclick="window.filterLogs('transfer')" class="px-5 py-2 bg-white border border-slate-200 text-slate-600 text-[10px] font-bold rounded-full hover:bg-slate-50 hover:text-slate-900 transition">MOVEMENTS</button>
         </div>
-        <div class="bg-white rounded-2xl border shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left" id="reportTable"><thead class="bg-slate-50 border-b"><tr><th class="p-3 pl-4 text-xs uppercase">Date</th><th class="text-xs uppercase">User Profile</th><th class="text-xs uppercase">Item</th><th class="text-xs uppercase">Type</th><th class="text-xs uppercase">Detail</th><th class="text-xs uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
+        <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-4 pl-6 text-xs text-slate-400 uppercase tracking-widest">Date</th><th class="text-xs text-slate-400 uppercase tracking-widest">User Profile</th><th class="text-xs text-slate-400 uppercase tracking-widest">Item Detail</th><th class="text-xs text-slate-400 uppercase tracking-widest">Transaction</th><th class="text-xs text-slate-400 uppercase tracking-widest">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
         window.filterLogs('all');
     }
 };
@@ -328,18 +368,22 @@ window.filterLogs = (type) => {
     let f = window.currentLogs || [];
     if(type === 'sale') f = f.filter(l => l.type === 'sale');
     if(type === 'transfer') f = f.filter(l => ['pending_transfer', 'transfer_completed', 'receive'].includes(l.type));
-    if(type === 'consumption') f = f.filter(l => l.to_location_id && l.locations?.type === 'department');
     
     const b = document.getElementById('logsBody');
     if(!b) return;
     b.innerHTML = f.map(l => {
         const locName = window.cachedLocations.find(loc => loc.id === l.profiles?.assigned_location_id)?.name || 'Unassigned';
-        let tag = l.type.toUpperCase(), det = `${l.from_loc?.name||'-'} ➜ ${l.locations?.name||'-'}`;
-        if(l.type === 'sale') { tag='SALE'; det='POS'; }
-        if(l.type === 'receive') { tag='IN'; det='Supplier'; }
-        return `<tr class="border-b hover:bg-slate-50"><td class="p-3 pl-4 text-xs font-bold text-slate-600">${new Date(l.created_at).toLocaleDateString()} <span class="block text-[10px] text-slate-400 font-normal">${new Date(l.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span></td>
-        <td class="text-xs"><button onclick="window.viewUserProfile('${l.profiles?.id}')" class="font-bold text-slate-900 hover:text-blue-600 transition flex flex-col text-left"><span class="uppercase">${l.profiles?.full_name || 'System'}</span><span class="text-[9px] text-slate-400 uppercase tracking-wider">${l.profiles?.role || '-'} &bull; ${locName}</span></button></td>
-        <td class="text-xs font-bold uppercase">${l.products?.name}</td><td><span class="text-[9px] font-bold px-2 py-1 rounded bg-slate-100 border border-slate-200">${tag}</span></td><td class="text-xs text-slate-500">${det}</td><td class="font-mono text-sm font-bold">${l.quantity}</td></tr>`;
+        let tag = l.type.toUpperCase(), det = `${l.from_loc?.name||'-'} ➜ ${l.locations?.name||'-'}`, badge='bg-slate-100 text-slate-500';
+        if(l.type === 'sale') { tag='SALE'; det='POS Transaction'; badge='bg-green-50 text-green-700 border-green-100'; }
+        if(l.type === 'receive') { tag='STOCK IN'; det='Supplier Entry'; badge='bg-blue-50 text-blue-700 border-blue-100'; }
+        
+        return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition group">
+            <td class="p-4 pl-6 text-xs font-bold text-slate-500">${new Date(l.created_at).toLocaleDateString()} <span class="text-[10px] font-normal opacity-50 block">${new Date(l.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span></td>
+            <td class="p-4"><button onclick="window.viewUserProfile('${l.profiles?.id}')" class="text-left group-hover:translate-x-1 transition-transform"><div class="font-bold text-xs uppercase text-slate-900">${l.profiles?.full_name || 'System'}</div><div class="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">${l.profiles?.role || '-'} &bull; ${locName}</div></button></td>
+            <td class="p-4"><div class="font-bold text-xs uppercase text-slate-700">${l.products?.name || 'Unknown'}</div><div class="text-[9px] text-slate-400 uppercase mt-0.5">${l.products?.category || '-'}</div></td>
+            <td class="p-4"><span class="text-[9px] font-bold px-2 py-1 rounded border ${badge}">${tag}</span><div class="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-wide">${det}</div></td>
+            <td class="p-4 font-mono text-sm font-bold text-slate-900">${l.quantity}</td>
+        </tr>`;
     }).join('');
 };
 
@@ -347,7 +391,19 @@ window.exportCSV = () => {
     let rows = [["Date","Time","User Name","Role","Assigned Location","Item","Category","Transaction Type","Location Flow","Quantity","Value"]];
     window.currentLogs.forEach(l => {
         const locName = window.cachedLocations.find(loc => loc.id === l.profiles?.assigned_location_id)?.name || 'Unassigned';
-        rows.push([new Date(l.created_at).toLocaleDateString(), new Date(l.created_at).toLocaleTimeString(), l.profiles?.full_name, l.profiles?.role, locName, l.products?.name, l.products?.category, l.type, `${l.from_loc?.name||''}->${l.locations?.name||''}`, l.quantity, l.total_value||0]);
+        rows.push([
+            new Date(l.created_at).toLocaleDateString(), 
+            new Date(l.created_at).toLocaleTimeString(),
+            l.profiles?.full_name, 
+            l.profiles?.role,
+            locName, // Added Location to CSV
+            l.products?.name, 
+            l.products?.category, 
+            l.type, 
+            `${l.from_loc?.name||''}->${l.locations?.name||''}`, 
+            l.quantity, 
+            l.total_value||0
+        ]);
     });
     let csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
     let link = document.createElement("a");
@@ -357,99 +413,47 @@ window.exportCSV = () => {
     link.click();
 };
 
-window.confirmReceive = (id) => { window.premiumConfirm("Confirm Receipt", "Received stock from supplier?", "Receive", () => window.receivePO(id)); };
+window.confirmReceive = (id) => { window.premiumConfirm("Confirm Receipt", "Are you sure you have physically received these items?", "Receive Stock", () => window.receivePO(id)); };
 
-// 5. STAFF (Logic Yako)
-window.renderStaff = async (c) => {
-    const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', window.profile.organization_id);
-    const { data: inv } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
-    c.innerHTML = `
-    <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">+ INVITE</button></div>
-    <div class="bg-white rounded-2xl border shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>
-    ${staff.map(s => `<tr class="border-b"><td class="p-4 font-bold text-sm uppercase">${s.full_name}</td><td class="text-xs uppercase font-bold text-blue-600">${s.role}</td><td class="text-right p-4"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}
-    ${inv.map(i => `<tr class="bg-yellow-50 border-b"><td class="p-4 text-sm font-medium text-slate-600">${i.email}</td><td class="text-xs uppercase text-slate-400">${i.role}</td><td class="text-right p-4"><span class="text-[9px] bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-bold">PENDING</span></td></tr>`).join('')}
-    </tbody></table></div>`;
-};
-
-// 6. SETTINGS (Logic Yako)
-window.renderSettings = async (c) => {
+window.inviteModal = async () => {
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
-    const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id);
-    const rateMap = {};
-    if(rates) rates.forEach(r => rateMap[r.currency_code] = r.rate);
-    const rateRows = ['TZS', 'USD', 'EUR', 'GBP', 'KES'].map(code => {
-        const isBase = code === window.baseCurrency;
-        const val = isBase ? 1 : (rateMap[code] || '');
-        return `<div class="flex justify-between items-center border-b py-3 last:border-0"><div class="flex gap-3 items-center"><div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold">${code[0]}</div><div><p class="font-bold text-sm">${code}</p><p class="text-[10px] text-slate-400 font-bold">${isBase?'Base':'Foreign'}</p></div></div><div>${isBase?'<span class="font-mono px-4 text-slate-400">1.00</span>':`<input id="rate-${code}" type="number" value="${val}" placeholder="Rate..." class="w-24 border rounded px-2 py-1 text-right font-mono font-bold text-sm">`}</div></div>`;
-    }).join('');
-
-    c.innerHTML = `
-    <h1 class="text-3xl font-bold uppercase text-slate-900 mb-8">Settings</h1>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div class="bg-white rounded-2xl border shadow-sm p-6">
-            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">+ ADD</button></div>
-            <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type}</td><td class="text-right"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}</tbody></table>
-        </div>
-        <div class="bg-white rounded-2xl border shadow-sm p-6">
-            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
-            ${rateRows}
-            <button onclick="window.saveRates()" class="btn-primary mt-6">UPDATE RATES</button>
-        </div>
-    </div>`;
-};
-
-window.saveRates = async () => {
-    const updates = [];
-    ['TZS', 'USD', 'EUR', 'GBP', 'KES'].forEach(code => {
-        if (code === window.baseCurrency) return;
-        const val = document.getElementById(`rate-${code}`).value;
-        if(val) updates.push({ organization_id: window.profile.organization_id, currency_code: code, rate: parseFloat(val) });
-    });
-    if(!updates.length) return;
-    const { error } = await supabase.from('exchange_rates').upsert(updates, { onConflict: 'organization_id, currency_code' });
-    if(error) return window.showNotification("Error updating rates", "error");
-    await window.initCurrency();
-    window.showNotification("Rates Updated", "success");
-    window.renderSettings(document.getElementById('app-view'));
-};
-
-// --- MODALS (Logic Yako Zote) ---
-window.addProductModal = () => {
-    if(window.profile.role !== 'manager') return;
-    const opts = SUPPORTED_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
     document.getElementById('modal-content').innerHTML = `
-    <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
-    <div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
-    <div class="grid grid-cols-2 gap-4 mb-4">
-        <div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Food">Food</option><option value="Beverage">Beverage</option><option value="Supplies">Supplies</option></select></div>
-        <div class="input-group mb-0"><label class="input-label">Unit</label><select id="pUnit" class="input-field"><option value="Pcs">Pcs</option><option value="Kg">Kg</option><option value="Ltr">Ltr</option><option value="Box">Box</option></select></div>
-    </div>
-    <div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">${opts}</select></div>
-    <div class="grid grid-cols-2 gap-4 mb-6"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
-    <button onclick="window.execAddProduct()" class="btn-primary">SAVE PRODUCT</button>`;
+    <h3 class="font-bold text-lg mb-6 uppercase text-center">Invite Staff</h3>
+    <div class="input-group"><label class="input-label">Email</label><input id="iE" class="input-field"></div>
+    <div class="input-group"><label class="input-label">Role</label><select id="iR" class="input-field"><option value="storekeeper">Storekeeper</option><option value="barman">Barman</option><option value="finance">Finance</option></select></div>
+    <div class="input-group"><label class="input-label">Assign</label><select id="iL" class="input-field">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
+    <button onclick="window.execInvite()" class="btn-primary">SEND INVITE</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
-window.execAddProduct = async () => {
-    const name = document.getElementById('pN').value.toUpperCase();
-    const cat = document.getElementById('pCat').value;
-    const unit = document.getElementById('pUnit').value;
-    const curr = document.getElementById('pCurrency').value;
-    const cost = parseFloat(document.getElementById('pC').value);
-    const selling = parseFloat(document.getElementById('pS').value);
-    if(!name || isNaN(cost)) return window.showNotification("Invalid input", "error");
-    const costBase = window.convertAmount(cost, curr, window.baseCurrency);
-    const sellingBase = window.convertAmount(selling, curr, window.baseCurrency);
-    if(costBase === null) return window.showNotification(`Set rate for ${curr} first`, "error");
-    await supabase.from('products').insert({ name, category: cat, unit, cost_price: costBase, selling_price: sellingBase, organization_id: window.profile.organization_id });
+window.execInvite = async () => {
+    const email = document.getElementById('iE').value;
+    if(!email) return;
+    await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: window.profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' });
     document.getElementById('modal').style.display = 'none';
-    window.showNotification("Product Added", "success");
-    window.router('inventory');
+    window.showNotification("Sent", "success");
+    window.router('staff');
+};
+
+window.addStoreModal = () => {
+    document.getElementById('modal-content').innerHTML = `
+    <h3 class="font-bold text-lg mb-6 uppercase text-center">Add Location</h3>
+    <div class="input-group"><label class="input-label">Name</label><input id="nN" class="input-field"></div>
+    <div class="input-group"><label class="input-label">Type</label><select id="nT" class="input-field"><option value="main_store">Main Store</option><option value="camp_store">Camp Store</option><option value="department">Department</option></select></div>
+    <button onclick="window.execAddStore()" class="btn-primary">CREATE</button>`;
+    document.getElementById('modal').style.display = 'flex';
+};
+
+window.execAddStore = async () => {
+    await createLocation(window.profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value);
+    document.getElementById('modal').style.display = 'none';
+    window.router('settings');
 };
 
 window.createPOModal = async () => {
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name');
     if(!prods || !prods.length) return window.showNotification("No products found. Add items first.", "error");
+
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-6 uppercase text-center">Create LPO</h3>
     <div class="input-group"><label class="input-label">Supplier</label><input id="lpoSup" class="input-field"></div>
@@ -464,6 +468,7 @@ window.execCreatePO = async () => {
     const sup = document.getElementById('lpoSup').value;
     const checks = document.querySelectorAll('.lpo-check:checked');
     if(!sup || !checks.length) return window.showNotification("Invalid Order", "error");
+    
     let total = 0, items = [];
     checks.forEach(c => {
         const qty = document.getElementById(`qty-${c.value}`).value;
@@ -473,6 +478,7 @@ window.execCreatePO = async () => {
             items.push({ product_id: c.value, quantity: qty, unit_cost: cost });
         }
     });
+
     const { data: po } = await supabase.from('purchase_orders').insert({ organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_name: sup, total_cost: total, status: 'Pending' }).select().single();
     await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id})));
     document.getElementById('modal').style.display = 'none';
@@ -481,9 +487,10 @@ window.execCreatePO = async () => {
 };
 
 window.receivePO = async (id) => {
-    // Note: Premium Confirm used here
+    // Note: confirmReceive uses premiumConfirm now
     const { data: items } = await supabase.from('po_items').select('*').eq('po_id', id);
     const { data: mainStore } = await supabase.from('locations').select('id').eq('organization_id', window.profile.organization_id).eq('type', 'main_store').single();
+    
     for(const item of items) {
         await supabase.rpc('add_stock_safe', { p_product_id: item.product_id, p_location_id: mainStore.id, p_quantity: item.quantity, p_org_id: window.profile.organization_id });
         await supabase.from('transactions').insert({ organization_id: window.profile.organization_id, user_id: window.profile.id, product_id: item.product_id, to_location_id: mainStore.id, type: 'receive', quantity: item.quantity });
