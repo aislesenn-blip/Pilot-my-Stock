@@ -7,11 +7,15 @@ let cart = [];
 let currentLogs = [];
 let selectedDestinationId = null; 
 let currentActionId = null; 
-let activePosLocationId = null; // --- HII ILIKUWA IMEKOSEKANA ---
+let activePosLocationId = null; 
+
+// --- CURRENCY STATE ---
+let currencyRates = { USD: 1 }; 
+let selectedCurrency = 'USD'; // Default
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
-// --- NOTIFICATIONS (ENGLISH ONLY) ---
+// --- NOTIFICATIONS ---
 window.showNotification = (message, type = 'success') => {
     const existing = document.getElementById('notif-toast');
     if(existing) existing.remove();
@@ -40,12 +44,82 @@ window.showConfirm = (title, desc, callback) => {
     });
 };
 
+// --- CURRENCY ENGINE (AUTO-FETCH) ---
+window.initCurrency = async () => {
+    const cached = localStorage.getItem('exchange_rates');
+    const today = new Date().toISOString().split('T')[0];
+    
+    if (cached) {
+        const data = JSON.parse(cached);
+        if (data.date === today) {
+            currencyRates = data.rates;
+            console.log("Using Cached Rates:", currencyRates);
+            return;
+        }
+    }
+
+    try {
+        // Hii API ni Free, haina Key, inavuta data za Benki Kuu za Dunia
+        const response = await fetch('https://open.er-api.com/v6/latest/USD');
+        const data = await response.json();
+        
+        currencyRates = {
+            USD: 1,
+            TZS: data.rates.TZS || 2600,
+            EUR: data.rates.EUR || 0.9,
+            GBP: data.rates.GBP || 0.8,
+            KES: data.rates.KES || 130
+        };
+
+        localStorage.setItem('exchange_rates', JSON.stringify({ date: today, rates: currencyRates }));
+        console.log("Fetched New Rates:", currencyRates);
+    } catch (e) {
+        console.error("Currency Fetch Error (Using Defaults):", e);
+        currencyRates = { USD: 1, TZS: 2600, EUR: 0.92, GBP: 0.79, KES: 129 }; 
+    }
+};
+
+window.formatPrice = (usdAmount) => {
+    if (!usdAmount && usdAmount !== 0) return '-';
+    const rate = currencyRates[selectedCurrency] || 1;
+    const converted = usdAmount * rate;
+    
+    if (selectedCurrency === 'TZS') return `TSh ${Math.round(converted).toLocaleString()}`;
+    if (selectedCurrency === 'KES') return `KSh ${Math.round(converted).toLocaleString()}`;
+    if (selectedCurrency === 'EUR') return `€${converted.toFixed(2)}`;
+    if (selectedCurrency === 'GBP') return `£${converted.toFixed(2)}`;
+    return `$${converted.toFixed(2)}`;
+};
+
+window.changeCurrency = (curr) => {
+    selectedCurrency = curr;
+    // Refresh view current ili bei zibadilike
+    const activeNav = document.querySelector('.nav-item.nav-active');
+    if (activeNav) {
+        const viewId = activeNav.id.replace('nav-', '');
+        router(viewId);
+    }
+};
+
+window.getCurrencySelectorHTML = () => {
+    return `
+    <select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">
+        <option value="USD" ${selectedCurrency === 'USD' ? 'selected' : ''}>USD ($)</option>
+        <option value="TZS" ${selectedCurrency === 'TZS' ? 'selected' : ''}>TZS (TSh)</option>
+        <option value="EUR" ${selectedCurrency === 'EUR' ? 'selected' : ''}>EUR (€)</option>
+        <option value="KES" ${selectedCurrency === 'KES' ? 'selected' : ''}>KES (KSh)</option>
+    </select>`;
+};
+
 // --- INITIALIZATION ---
 window.onload = async () => {
     // Inject CSS
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
+
+    // Washa Currency Engine Kabla ya Kitu Chochote
+    await window.initCurrency();
 
     // Mobile Menu Logic
     const mobileBtn = document.getElementById('mobile-menu-btn');
@@ -120,7 +194,7 @@ window.router = async (view) => {
     
     try {
         if (view === 'inventory') await renderInventory(app);
-        else if (view === 'bar') await renderBar(app); // --- HAPA NDIPO ILIKUWA INAFELI KAMA FUNCTION HAIPO ---
+        else if (view === 'bar') await renderBar(app); 
         else if (view === 'approvals') await renderApprovals(app);
         else if (view === 'reports') await renderReports(app);
         else if (view === 'staff') await renderStaff(app);
@@ -131,17 +205,15 @@ window.router = async (view) => {
     }
 };
 
-// --- POS / BAR MODULE (ADDED) ---
+// --- POS / BAR MODULE ---
 async function renderBar(c) {
     try {
         const inv = await getInventory(profile.organization_id);
         const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).eq('type', 'department');
 
-        // Logic ya kuchagua stoo
         if (profile.role === 'barman') {
             activePosLocationId = profile.assigned_location_id;
         } else {
-            // Manager/Finance default selection
             if (!activePosLocationId && locs.length > 0) activePosLocationId = locs[0].id;
         }
 
@@ -160,14 +232,17 @@ async function renderBar(c) {
             ${storeSelector}
             <div class="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)]">
                 <div class="flex-1 overflow-y-auto pr-2">
-                    <h1 class="text-2xl font-bold mb-6 uppercase text-slate-900 sticky top-0 bg-slate-100 py-2 z-10">POS Terminal</h1>
+                    <div class="flex justify-between items-center mb-6 sticky top-0 bg-slate-100 py-2 z-10">
+                        <h1 class="text-2xl font-bold uppercase text-slate-900">POS Terminal</h1>
+                        ${window.getCurrencySelectorHTML()} 
+                    </div>
                     <div class="grid grid-cols-2 md:grid-cols-3 gap-4 pb-10">
                         ${items.length ? items.map(x => `
                             <div onclick="window.addCart('${x.products.name}',${x.products.selling_price},'${x.product_id}')" 
                                  class="bg-white p-5 border rounded-2xl cursor-pointer hover:border-slate-900 transition shadow-sm group relative overflow-hidden">
                                 <div class="absolute top-0 right-0 bg-slate-100 px-2 py-1 rounded-bl-lg text-[10px] font-bold text-slate-500">Qty: ${x.quantity}</div>
                                 <p class="text-[10px] font-bold text-slate-400 uppercase mb-1 tracking-wider">${x.products.name}</p>
-                                <p class="font-bold text-xl text-slate-900">$${x.products.selling_price}</p>
+                                <p class="font-bold text-xl text-slate-900">${window.formatPrice(x.products.selling_price)}</p>
                             </div>`).join('') : 
                             '<div class="col-span-3 text-center py-12 border-2 border-dashed border-slate-300 rounded-2xl"><p class="text-slate-400 font-bold text-xs uppercase">No stock found here.</p></div>'}
                     </div>
@@ -208,7 +283,7 @@ async function renderInventory(c) {
     const stockRows = filteredStock.map(i => `
         <tr class="transition hover:bg-slate-50 border-b border-slate-100 last:border-0 group">
             <td class="font-bold text-gray-800 uppercase py-3 pl-4">${i.products?.name}</td>
-            ${showPrice ? `<td class="font-mono text-xs text-slate-500">$${i.products.cost_price}</td><td class="font-mono text-xs text-slate-900 font-bold">$${i.products.selling_price}</td>` : ''}
+            ${showPrice ? `<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs text-slate-900 font-bold">${window.formatPrice(i.products.selling_price)}</td>` : ''}
             <td class="text-xs font-bold text-gray-500 uppercase tracking-widest">${i.locations?.name}</td>
             <td class="font-mono font-bold text-gray-900 text-lg">${i.quantity}</td>
             <td class="text-right pr-4 flex justify-end gap-2 items-center py-3">
@@ -222,7 +297,10 @@ async function renderInventory(c) {
 
     c.innerHTML = `
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
-            <div><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1></div>
+            <div class="flex items-center">
+                <h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>
+                ${showPrice ? window.getCurrencySelectorHTML() : ''}
+            </div>
             <div class="flex gap-3">${showAdmin ? `<button onclick="window.addProductModal()" class="btn-primary w-auto px-6">Register Item</button><button onclick="window.addStockModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/20">Receive Stock</button>` : ''}</div>
         </div>
         <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left">
@@ -293,7 +371,16 @@ async function renderReports(c) {
         const totalSales = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
         const totalProfit = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
 
-        c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1><div class="flex gap-2">${showFinancials ? `<button onclick="window.exportCSV()" class="btn-primary bg-green-700 hover:bg-green-800 text-xs px-4 flex gap-2 items-center">EXPORT CSV</button>` : ''}</div></div>${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">$${totalSales.toLocaleString()}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">$${totalProfit.toLocaleString()}</p></div></div>` : ''}<div class="flex flex-wrap gap-2 mb-6"><button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button><button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button><button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button><button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Time & Date</th><th class="text-xs font-bold text-slate-400 uppercase">User Identity</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
+        c.innerHTML = `
+        <div class="flex flex-col md:flex-row justify-between items-center mb-10 gap-4">
+            <div class="flex items-center">
+                <h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1>
+                ${showFinancials ? window.getCurrencySelectorHTML() : ''}
+            </div>
+            <div class="flex gap-2">${showFinancials ? `<button onclick="window.exportCSV()" class="btn-primary bg-green-700 hover:bg-green-800 text-xs px-4 flex gap-2 items-center">EXPORT CSV</button>` : ''}</div>
+        </div>
+        ${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12"><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Sales</p><p class="text-4xl font-bold font-mono text-slate-900">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-8 border border-slate-200 rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-bold font-mono text-green-600">${window.formatPrice(totalProfit)}</p></div></div>` : ''}
+        <div class="flex flex-wrap gap-2 mb-6"><button onclick="window.filterLogs('all')" class="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-full">ALL</button><button onclick="window.filterLogs('sale')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">SALES</button><button onclick="window.filterLogs('transfer')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">TRANSFERS</button><button onclick="window.filterLogs('consumption')" class="px-4 py-2 bg-white border border-slate-200 text-slate-600 text-xs font-bold rounded-full">CONSUMPTION</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table id="reportTable" class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-200"><tr><th class="py-3 pl-4 text-xs font-bold text-slate-400 uppercase">Time & Date</th><th class="text-xs font-bold text-slate-400 uppercase">User Identity</th><th class="text-xs font-bold text-slate-400 uppercase">Item</th><th class="text-xs font-bold text-slate-400 uppercase">Action</th><th class="text-xs font-bold text-slate-400 uppercase">Details</th><th class="text-xs font-bold text-slate-400 uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
         window.filterLogs('all');
     } catch(e) { 
         console.error("REPORT ERROR:", e);
@@ -397,14 +484,14 @@ window.addStoreModal=()=>{
     <button onclick="window.execAddStore()" class="btn-primary mt-6">Create</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
+window.switchBar = (id) => { activePosLocationId = id; router('bar'); };
+window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart();}
+window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText=window.formatPrice(0); return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText=window.formatPrice(sum); }
+window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
+window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
 
 window.execAddProduct = async () => { try { await supabase.from('products').insert({ name: document.getElementById('pN').value.toUpperCase(), cost_price: document.getElementById('pC').value, selling_price: document.getElementById('pS').value, organization_id: profile.organization_id }); document.getElementById('modal').style.display = 'none'; window.showNotification("Product Registered", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execAddStock = async () => { try { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(!qty || qty <= 0) return window.showNotification("Invalid Quantity", "error"); const { error } = await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: profile.organization_id }); if(error) throw error; await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Updated Successfully", "success"); router('inventory'); } catch(e) { window.showNotification(e.message, "error"); } };
 window.execInvite = async () => { const email = document.getElementById('iE').value; if(!email.includes('@')) return window.showNotification("Invalid Email", "error"); await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' }); document.getElementById('modal').style.display = 'none'; window.showNotification("Invitation Sent", "success"); router('staff'); };
 window.execIssue = async (pId, fId) => { try { const qty = document.getElementById('tQty').value; if (!selectedDestinationId) return window.showNotification("Select Destination", "error"); if (!qty || qty <= 0) return window.showNotification("Enter Quantity", "error"); await transferStock(pId, fId, selectedDestinationId, qty, profile.id, profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Transfer Requested", "success"); router('inventory'); } catch(e){ window.showNotification(e.message, "error"); } };
 window.execAddStore=async()=>{ await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value); document.getElementById('modal').style.display = 'none'; router('settings'); };
-window.switchBar = (id) => { activePosLocationId = id; router('bar'); };
-window.addCart=(n,p,id)=>{const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart();}
-window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); if(!cart.length){l.innerHTML='<div class="text-center text-xs text-slate-300 py-8 font-bold uppercase tracking-widest">Empty Ticket</div>'; t.innerText='$0.00'; return;} let sum=0; l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold uppercase text-slate-700"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500 font-bold hover:text-red-700">X</button></div>`}).join(''); t.innerText='$'+sum.toFixed(2); }
-window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
-window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
