@@ -14,7 +14,7 @@
         ::-webkit-scrollbar-thumb { background: #94A3B8; border-radius: 10px; }
         
         /* MODALS */
-        #modal, #name-modal, #confirm-modal, #supplier-modal, #profile-viewer { display: none; }
+        #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer { display: none; }
         
         .modal-box { background: white; width: 100%; max-width: 520px; border-radius: 24px; padding: 32px; position: relative; overflow: visible !important; }
         .animate-pop { animation: pop 0.2s ease-out forwards; }
@@ -26,6 +26,9 @@
         .input-field:focus { border-color: #0F172A; background: #fff; box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.1); }
         .btn-primary { background: #0F172A; color: #fff; padding: 14px; border-radius: 12px; font-weight: 600; width: 100%; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; transition: 0.2s; }
         .btn-primary:hover { background: #1E293B; transform: translateY(-1px); }
+        
+        /* Currency Select */
+        .currency-select { background: transparent; font-weight: 700; font-size: 12px; outline: none; cursor: pointer; color: #0F172A; }
     </style>
 </head>
 
@@ -63,7 +66,8 @@
 
     <div id="supplier-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-lg rounded-3xl p-8 shadow-2xl animate-pop">
-            <h3 class="font-bold text-lg mb-6 uppercase text-center text-slate-900">Register Supplier</h3>
+            <h3 id="supTitle" class="font-bold text-lg mb-6 uppercase text-center text-slate-900">Supplier Details</h3>
+            <input type="hidden" id="supId">
             <div class="space-y-4">
                 <div class="input-group"><label class="input-label">Company Name</label><input id="supName" class="input-field uppercase" placeholder="e.g. Serengeti Breweries"></div>
                 <div class="grid grid-cols-2 gap-4">
@@ -73,17 +77,33 @@
                 <div class="input-group"><label class="input-label">Physical Address</label><textarea id="supAddr" class="input-field h-24 resize-none" placeholder="Box 123, Industrial Area..."></textarea></div>
             </div>
             <div class="flex gap-3 mt-6">
+                <button onclick="window.deleteSupplier()" id="btnDelSup" class="flex-1 py-3 text-xs font-bold uppercase bg-red-50 text-red-600 border border-red-100 rounded-xl hover:bg-red-100">Delete</button>
                 <button onclick="document.getElementById('supplier-modal').style.display='none'" class="flex-1 py-3 text-xs font-bold uppercase border border-slate-200 rounded-xl hover:bg-slate-50 text-slate-600">Cancel</button>
                 <button onclick="window.saveSupplier()" class="flex-1 py-3 text-xs font-bold uppercase bg-[#0F172A] text-white rounded-xl hover:bg-slate-800 shadow-lg">Save Record</button>
             </div>
         </div>
     </div>
 
+    <div id="reassign-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl animate-pop text-center">
+            <h3 class="font-bold text-xl mb-2 text-slate-900">Suspend & Reassign</h3>
+            <p class="text-sm text-slate-500 mb-6">Enter new email to transfer access immediately. The old user will be suspended.</p>
+            <input type="hidden" id="suspendUserId">
+            <input type="hidden" id="suspendUserRole">
+            <input type="hidden" id="suspendUserLoc">
+            <div class="input-group text-left">
+                <label class="input-label">New Staff Email</label>
+                <input id="reassignEmail" class="input-field" placeholder="new.staff@company.com">
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="document.getElementById('reassign-modal').style.display='none'" class="flex-1 py-3 text-xs font-bold uppercase border border-slate-200 rounded-xl hover:bg-slate-50">Cancel</button>
+                <button onclick="window.executeReassign()" class="flex-1 py-3 text-xs font-bold uppercase bg-red-600 text-white rounded-xl hover:bg-red-700 shadow-lg">Suspend & Invite</button>
+            </div>
+        </div>
+    </div>
+
     <div id="confirm-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[10000] flex items-center justify-center p-4">
         <div class="bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl text-center animate-pop">
-            <div class="w-14 h-14 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg class="w-6 h-6 text-slate-900" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            </div>
             <h3 id="confirm-title" class="text-xl font-bold text-slate-900 mb-2">Are you sure?</h3>
             <p id="confirm-desc" class="text-sm text-slate-500 mb-8">This action cannot be undone.</p>
             <div class="flex gap-3">
@@ -103,7 +123,7 @@
             <div class="pt-12 pb-8 px-8 text-center">
                 <h2 id="pv-name" class="text-xl font-bold text-slate-900">User Name</h2>
                 <span id="pv-role" class="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-bold uppercase rounded-full mt-2 inline-block">Role</span>
-                <span id="pv-status" class="block mt-2 text-[10px] font-bold uppercase text-slate-400">STATUS: ACTIVE</span>
+                <span id="pv-status" class="block mt-2 text-[10px] font-bold uppercase"></span>
                 <div class="mt-6 text-left space-y-3">
                     <div class="p-3 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Email</p><p id="pv-email" class="text-sm font-bold text-slate-800">user@email.com</p></div>
                     <div class="p-3 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Phone</p><p id="pv-phone" class="text-sm font-bold text-slate-800">Not Provided</p></div>
