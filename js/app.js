@@ -2,16 +2,17 @@ import { getSession, logout } from './auth.js';
 import { getInventory, createLocation, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
-let profile = null; 
-let cart = []; 
+let profile = null;
+let cart = [];
 let currentLogs = [];
-let selectedDestinationId = null; 
-let currentActionId = null; 
-let activePosLocationId = null; 
+let selectedDestinationId = null;
+let currentActionId = null;
+let activePosLocationId = null;
 
-// --- CURRENCY STATE ---
-let currencyRates = { USD: 1 }; 
-let selectedCurrency = 'USD'; // Default Display Currency
+// --- CURRENCY ENGINE STATE ---
+let baseCurrency = 'USD'; // Itabadilika baada ya ku-fetch kutoka DB
+let currencyRates = {};   // Itajaa rates ambazo Manager ameweka (Manual)
+let selectedCurrency = 'USD'; // Currency inayoonekana kwa sasa
 
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
 
@@ -22,7 +23,7 @@ window.showNotification = (message, type = 'success') => {
     const div = document.createElement('div');
     div.id = 'notif-toast';
     div.className = `fixed top-5 right-5 px-6 py-4 rounded-xl text-white font-bold shadow-2xl z-[10000] flex items-center gap-3 transition-all duration-300 transform translate-y-0`;
-    div.style.backgroundColor = type === 'success' ? '#0f172a' : '#ef4444'; 
+    div.style.backgroundColor = type === 'success' ? '#0f172a' : '#ef4444';
     div.innerHTML = `<span>${message}</span>`;
     document.body.appendChild(div);
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 300); }, 3000);
@@ -44,50 +45,59 @@ window.showConfirm = (title, desc, callback) => {
     });
 };
 
-// --- CURRENCY ENGINE (AUTO-FETCH) ---
+// --- 💰 CURRENCY ENGINE (DATABASE DRIVEN) ---
 window.initCurrency = async () => {
-    const cached = localStorage.getItem('exchange_rates');
-    const today = new Date().toISOString().split('T')[0];
-    
-    if (cached) {
-        const data = JSON.parse(cached);
-        if (data.date === today) {
-            currencyRates = data.rates;
-            console.log("Using Cached Rates:", currencyRates);
-            return;
-        }
-    }
+    if (!profile) return;
 
     try {
-        const response = await fetch('https://open.er-api.com/v6/latest/USD');
-        const data = await response.json();
-        
-        currencyRates = {
-            USD: 1,
-            TZS: data.rates.TZS || 2600,
-            EUR: data.rates.EUR || 0.9,
-            GBP: data.rates.GBP || 0.8,
-            KES: data.rates.KES || 130
-        };
+        // 1. Vuta Base Currency ya Kampuni (TZS, USD, nk)
+        const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', profile.organization_id).single();
+        if (org) {
+            baseCurrency = org.base_currency;
+            selectedCurrency = baseCurrency; // Default view ni Base Currency
+        }
 
-        localStorage.setItem('exchange_rates', JSON.stringify({ date: today, rates: currencyRates }));
-        console.log("Fetched New Rates:", currencyRates);
+        // 2. Vuta Rates za Ofisi (Manual Rates)
+        const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', profile.organization_id);
+        
+        // Reset Rates
+        currencyRates = {};
+        
+        // Panga rates: Mfano { USD: 2600, EUR: 2800 }
+        if (rates && rates.length > 0) {
+            rates.forEach(r => {
+                currencyRates[r.currency_code] = r.rate;
+            });
+        }
+        
+        // Base currency always 1
+        currencyRates[baseCurrency] = 1;
+
+        console.log(`System Currency: ${baseCurrency}`, currencyRates);
     } catch (e) {
-        console.error("Currency Fetch Error (Using Defaults):", e);
-        currencyRates = { USD: 1, TZS: 2600, EUR: 0.92, GBP: 0.79, KES: 129 }; 
+        console.error("Currency Init Error:", e);
     }
 };
 
-window.formatPrice = (usdAmount) => {
-    if (!usdAmount && usdAmount !== 0) return '-';
-    const rate = currencyRates[selectedCurrency] || 1;
-    const converted = usdAmount * rate;
+// Logic ya Kubadili Bei kwenye Display
+window.formatPrice = (amount) => {
+    if (!amount && amount !== 0) return '-';
     
-    if (selectedCurrency === 'TZS') return `TSh ${Math.round(converted).toLocaleString()}`;
-    if (selectedCurrency === 'KES') return `KSh ${Math.round(converted).toLocaleString()}`;
-    if (selectedCurrency === 'EUR') return `€${converted.toFixed(2)}`;
-    if (selectedCurrency === 'GBP') return `£${converted.toFixed(2)}`;
-    return `$${converted.toFixed(2)}`;
+    // Amount inayokuja hapa ni BASE CURRENCY (kutoka DB)
+    
+    // 1. Kama anaangalia Base Currency, onyesha vile vile
+    if (selectedCurrency === baseCurrency) {
+        return `${baseCurrency} ${Number(amount).toLocaleString()}`;
+    }
+
+    // 2. Kama anaangalia Foreign Currency (Mfano USD), GAWANYA kwa Rate
+    // Mfano: Base TZS 5200 / Rate 2600 = 2 USD
+    const rate = currencyRates[selectedCurrency];
+    
+    if (!rate || rate === 0) return 'Rate N/A'; // Rate haijawekwa na Manager
+
+    const converted = amount / rate;
+    return `${selectedCurrency} ${converted.toFixed(2)}`;
 };
 
 window.changeCurrency = (curr) => {
@@ -100,12 +110,15 @@ window.changeCurrency = (curr) => {
 };
 
 window.getCurrencySelectorHTML = () => {
+    // Dropdown inajengwa kulingana na Base Currency + Rates zilizopo
+    const commonCurrencies = ['TZS', 'USD', 'EUR', 'KES', 'GBP'];
+    const options = commonCurrencies.map(c => 
+        `<option value="${c}" ${selectedCurrency === c ? 'selected' : ''}>${c}</option>`
+    ).join('');
+
     return `
     <select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">
-        <option value="USD" ${selectedCurrency === 'USD' ? 'selected' : ''}>USD ($)</option>
-        <option value="TZS" ${selectedCurrency === 'TZS' ? 'selected' : ''}>TZS (TSh)</option>
-        <option value="EUR" ${selectedCurrency === 'EUR' ? 'selected' : ''}>EUR (€)</option>
-        <option value="KES" ${selectedCurrency === 'KES' ? 'selected' : ''}>KES (KSh)</option>
+        ${options}
     </select>`;
 };
 
@@ -114,8 +127,6 @@ window.onload = async () => {
     const style = document.createElement('style');
     style.innerHTML = `#modal, #modal-content, #name-modal { overflow: visible !important; }`;
     document.head.appendChild(style);
-
-    await window.initCurrency();
 
     const mobileBtn = document.getElementById('mobile-menu-btn');
     const sidebar = document.getElementById('sidebar');
@@ -140,6 +151,9 @@ window.onload = async () => {
 
         profile = prof;
         if (!profile || !profile.organization_id) { window.location.href = 'setup.html'; return; }
+
+        // Fetch Currency Settings NOW that we have profile
+        await window.initCurrency();
 
         const forbiddenNames = ['Manager', 'Storekeeper', 'Barman', 'Finance', 'User', 'Admin', 'Staff'];
         const currentName = profile.full_name ? profile.full_name.trim() : "";
@@ -252,7 +266,7 @@ async function renderBar(c) {
                     <div class="border-t border-slate-100 pt-6 mt-auto">
                         <div class="flex justify-between font-bold text-2xl mb-6 text-slate-900">
                             <span>Total</span>
-                            <span id="cart-total">$0.00</span>
+                            <span id="cart-total">${window.formatPrice(0)}</span>
                         </div>
                         <button onclick="window.checkout()" class="w-full bg-slate-900 text-white py-4 rounded-xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 shadow-lg transform active:scale-95 transition">
                             Complete Sale
@@ -401,20 +415,23 @@ async function renderStaff(c){
 }
 async function renderSettings(c){
     const{data:l}=await supabase.from('locations').select('*').eq('organization_id',profile.organization_id);
-    c.innerHTML=`<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div><div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>`;
+    
+    // --- SETTINGS VIEW (Weka button ya kubadili rates hapa kama utahitaji) ---
+    c.innerHTML=`
+        <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Locations</h1><button onclick="window.addStoreModal()" class="btn-primary w-auto px-6 py-3 text-xs">+ Add Hub</button></div>
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-8"><div class="overflow-x-auto"><table class="w-full text-left"><tbody>${l.map(x=>`<tr class="border-b border-slate-50 last:border-0"><td class="font-bold text-sm uppercase py-3 pl-4 text-slate-700">${x.name}</td><td class="text-xs font-bold uppercase text-gray-400">${x.type.replace('_',' ')}</td><td class="text-green-600 font-bold text-[9px] text-right pr-4 uppercase"><span class="bg-green-50 px-3 py-1 rounded-full">ACTIVE</span></td></tr>`).join('')}</tbody></table></div></div>
+        
+        `;
 }
 
-// --- MODALS (UPDATED FOR CURRENCY INPUT) ---
+// --- MODALS (SMART CURRENCY INPUT) ---
 window.addProductModal = () => { 
     if(profile.role !== 'manager') return; 
     
-    // Dropdown ya Currency (Kusaidia kuingiza data)
-    const currencyOptions = `
-        <option value="USD">USD ($)</option>
-        <option value="TZS">TZS (Sh)</option>
-        <option value="KES">KES (KSh)</option>
-        <option value="EUR">EUR (€)</option>
-    `;
+    // Tunajenga options kulingana na Base Currency na Rates zilizopo
+    const currencyOptions = [baseCurrency, ...Object.keys(currencyRates).filter(c => c !== baseCurrency)]
+        .map(c => `<option value="${c}">${c}</option>`)
+        .join('');
 
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
@@ -426,7 +443,7 @@ window.addProductModal = () => {
             <select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">
                 ${currencyOptions}
             </select>
-            <p class="text-[10px] text-slate-400 mt-1">* System will convert this to USD automatically.</p>
+            <p class="text-[10px] text-slate-400 mt-1">* Auto-converts to ${baseCurrency} based on fixed rate.</p>
         </div>
 
         <div class="grid grid-cols-2 gap-5 mb-8">
@@ -509,7 +526,7 @@ window.renderCart=()=>{ const l=document.getElementById('cart-list'), t=document
 window.remCart=(id)=>{cart=cart.filter(c=>c.id!==id); window.renderCart();}
 window.checkout=async()=>{if(!cart.length) return; try{await processBarSale(profile.organization_id, activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Completed", "success"); cart=[]; window.renderCart(); router('bar');}catch(e){window.showNotification(e.message, "error");}}
 
-// --- EXEC ADD PRODUCT (UPDATED LOGIC) ---
+// --- EXEC ADD PRODUCT (SMART CONVERSION) ---
 window.execAddProduct = async () => { 
     try { 
         const name = document.getElementById('pN').value.toUpperCase();
@@ -519,22 +536,28 @@ window.execAddProduct = async () => {
 
         if (!name || isNaN(cost) || isNaN(selling)) return window.showNotification("Invalid details", "error");
 
-        // --- CONVERSION LOGIC ---
-        // Tunagawanya na Rate ili kupata USD halisi kabla ya kutuma Supabase
-        const rate = currencyRates[inputCurrency] || 1;
-        const costUSD = cost / rate;
-        const sellingUSD = selling / rate;
+        // --- CONVERSION LOGIC (INJINI YA KIBENKI) ---
+        // 1. Tunapata Rate ya currency uliyochagua (Kama TZS, rate ni 2600. Kama Base, rate ni 1)
+        const rate = currencyRates[inputCurrency];
+        
+        if (!rate) throw new Error(`Exchange rate for ${inputCurrency} is missing. Please ask Manager to add it in Settings.`);
+
+        // 2. Tunabadilisha kwenda Base Currency (Gawanya kwa Rate)
+        // Mfano: Uliweka TZS 5200. Base ni USD. Rate ni 2600.
+        // Hesabu: 5200 / 2600 = 2 USD.
+        const costBase = cost / rate;
+        const sellingBase = selling / rate;
 
         await supabase.from('products').insert({ 
             name: name, 
-            cost_price: costUSD,     // Save as USD
-            selling_price: sellingUSD, // Save as USD
+            cost_price: costBase,     // Inaenda kama BASE CURRENCY
+            selling_price: sellingBase, // Inaenda kama BASE CURRENCY
             organization_id: profile.organization_id,
             unit: 'pcs' 
         }); 
 
         document.getElementById('modal').style.display = 'none'; 
-        window.showNotification(`Saved (Converted to USD ${sellingUSD.toFixed(2)})`, "success"); 
+        window.showNotification(`Saved (Value: ${baseCurrency} ${sellingBase.toFixed(2)})`, "success"); 
         router('inventory'); 
     } catch(e) { 
         window.showNotification(e.message, "error"); 
