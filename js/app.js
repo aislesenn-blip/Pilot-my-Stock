@@ -216,7 +216,7 @@ window.renderBar = async (c) => {
             </div>
         </div>
         <div class="w-full lg:w-96 bg-white border rounded-2xl p-6 h-full flex flex-col shadow-xl">
-            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-sm uppercase">Ticket</h3><button onclick="cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500">CLEAR</button></div>
+            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-sm uppercase">Ticket</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500">CLEAR</button></div>
             <div id="cart-list" class="flex-1 overflow-y-auto space-y-2"></div>
             <div class="pt-4 border-t mt-auto"><div class="flex justify-between text-xl font-bold mb-4"><span>Total</span><span id="cart-total">${window.formatPrice(0)}</span></div><button onclick="window.checkout()" class="btn-primary py-4 text-sm shadow-lg">CHARGE</button></div>
         </div>
@@ -225,15 +225,20 @@ window.renderBar = async (c) => {
 };
 
 window.switchBar = (id) => { window.activePosLocationId = id; window.router('bar'); };
-window.addCart = (n,p,id) => { const x=cart.find(c=>c.id===id); if(x)x.qty++; else cart.push({name:n,price:p,id,qty:1}); window.renderCart(); };
+window.addCart = (n,p,id) => { 
+    if(!window.cart) window.cart = [];
+    const x=window.cart.find(c=>c.id===id); 
+    if(x)x.qty++; else window.cart.push({name:n,price:p,id,qty:1}); 
+    window.renderCart(); 
+};
 window.renderCart = () => { 
     const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); 
     let sum=0; 
-    l.innerHTML=cart.map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold p-2 bg-slate-50 rounded border border-slate-100"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500">X</button></div>`}).join(''); 
+    l.innerHTML=(window.cart||[]).map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold p-2 bg-slate-50 rounded border border-slate-100"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500">X</button></div>`}).join(''); 
     t.innerText=window.formatPrice(sum); 
 };
-window.remCart = (id) => { cart=cart.filter(c=>c.id!==id); window.renderCart(); };
-window.checkout = async () => { if(!cart.length) return; try{await processBarSale(profile.organization_id, window.activePosLocationId, cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Complete", "success"); cart=[]; window.renderCart(); window.router('bar');}catch(e){window.showNotification(e.message, "error");}};
+window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.renderCart(); };
+window.checkout = async () => { if(!window.cart.length) return; try{await processBarSale(profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Complete", "success"); window.cart=[]; window.renderCart(); window.router('bar');}catch(e){window.showNotification(e.message, "error");}};
 
 // --- 3. APPROVALS ---
 window.renderApprovals = async (c) => {
@@ -270,7 +275,7 @@ window.renderReports = async (c) => {
 
         c.innerHTML = `
         <div class="flex justify-between items-center mb-8 gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1>${showFinancials ? window.getCurrencySelectorHTML() : ''}</div>
-            <div class="flex gap-2 bg-slate-100 p-1 rounded-full"><button class="px-5 py-2 text-xs font-bold rounded-full bg-white shadow text-slate-900">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500">VARIANCE</button></div>
+            <div class="flex gap-2 bg-slate-100 p-1 rounded-full"><button class="px-5 py-2 text-xs font-bold rounded-full bg-white shadow text-slate-900">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500 hover:text-slate-700">VARIANCE</button></div>
             <button onclick="window.exportCSV()" class="btn-primary w-auto px-4 bg-green-700 hover:bg-green-800">EXPORT CSV</button>
         </div>
         ${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Total Revenue</p><p class="text-3xl font-mono font-bold">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Gross Profit</p><p class="text-3xl font-mono font-bold text-green-600">${window.formatPrice(totalProfit)}</p></div></div>` : ''}
@@ -335,7 +340,7 @@ window.renderSettings = async (c) => {
     
     const rateRows = ['TZS', 'USD', 'EUR', 'GBP', 'KES'].map(code => {
         const isBase = code === baseCurrency;
-        const val = isBase ? 1 : (rateMap[code] || '');
+        const val = isBase ? 1 : (rateMap[code] || ''); 
         return `<div class="flex justify-between items-center border-b py-3 last:border-0"><div class="flex gap-3 items-center"><div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold">${code[0]}</div><div><p class="font-bold text-sm">${code}</p><p class="text-[10px] text-slate-400 font-bold">${isBase?'Base':'Foreign'}</p></div></div><div>${isBase?'<span class="font-mono px-4 text-slate-400">1.00</span>':`<input id="rate-${code}" type="number" value="${val}" placeholder="Rate..." class="w-24 border rounded px-2 py-1 text-right font-mono font-bold text-sm">`}</div></div>`;
     }).join('');
 
@@ -343,8 +348,8 @@ window.renderSettings = async (c) => {
     <h1 class="text-3xl font-bold uppercase text-slate-900 mb-8">Settings</h1>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div class="bg-white rounded-2xl border shadow-sm p-6">
-            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">+ ADD</button></div>
-            <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type}</td><td class="text-right"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}</tbody></table>
+            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] font-bold bg-slate-900 text-white px-3 py-1.5 rounded">+ ADD</button></div>
+            <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase">${l.name}</td><td class="text-xs font-bold uppercase text-gray-400">${l.type}</td><td class="text-right"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}</tbody></table>
         </div>
         <div class="bg-white rounded-2xl border shadow-sm p-6">
             <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
@@ -479,7 +484,7 @@ window.execAddStock = async () => {
 };
 
 window.issueModal = async (name, id, fromLoc) => {
-    selectedDestinationId = null;
+    window.selectedDestinationId = null;
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
     const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join('');
     document.getElementById('modal-content').innerHTML = `
@@ -493,14 +498,14 @@ window.issueModal = async (name, id, fromLoc) => {
 window.selectDest = (el, id) => {
     document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white'));
     el.classList.add('bg-slate-900', 'text-white');
-    selectedDestinationId = id;
+    window.selectedDestinationId = id;
 };
 
 window.execIssue = async (pid, fromLoc) => {
     const qty = document.getElementById('tQty').value;
-    if(!selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error");
+    if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error");
     try {
-        await transferStock(pid, fromLoc, selectedDestinationId, qty, profile.id, profile.organization_id);
+        await transferStock(pid, fromLoc, window.selectedDestinationId, qty, profile.id, profile.organization_id);
         document.getElementById('modal').style.display = 'none';
         window.showNotification("Request Sent", "success");
     } catch(e) { window.showNotification(e.message, "error"); }
