@@ -3,15 +3,18 @@ import { getInventory, createLocation, processBarSale, getPendingApprovals, resp
 import { supabase } from './supabase.js';
 
 // --- GLOBAL VARIABLES ---
-let profile = null;
-let currentLogs = [];
-let baseCurrency = 'USD'; 
-let currencyRates = {};   
-let selectedCurrency = 'USD'; 
+window.profile = null;
+window.currentLogs = [];
+window.cart = []; // POS Cart
+window.baseCurrency = 'USD'; 
+window.currencyRates = {};   
+window.selectedCurrency = 'USD'; 
+window.activePosLocationId = null; // Track Active Bar
+
 const STRONG_CURRENCIES = ['USD', 'EUR', 'GBP'];
 const SUPPORTED_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES'];
 
-// --- UTILITIES (ATTACHED TO WINDOW DIRECTLY) ---
+// --- UTILITIES ---
 window.closeModalOutside = (e) => { 
     if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; 
 };
@@ -29,9 +32,12 @@ window.showConfirm = (title, desc, callback) => {
     document.getElementById('confirm-title').innerText = title;
     document.getElementById('confirm-desc').innerText = desc;
     document.getElementById('confirm-modal').style.display = 'flex';
+    
+    // Clean old listeners
     const btn = document.getElementById('confirm-btn');
     const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
+    
     newBtn.addEventListener('click', async () => {
         document.getElementById('confirm-modal').style.display = 'none';
         await callback();
@@ -40,57 +46,53 @@ window.showConfirm = (title, desc, callback) => {
 
 // --- CURRENCY LOGIC ---
 window.initCurrency = async () => {
-    if (!profile) return;
+    if (!window.profile) return;
     try {
-        const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', profile.organization_id).single();
+        const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single();
         if (org) {
-            baseCurrency = org.base_currency;
-            if (!localStorage.getItem('user_pref_currency')) selectedCurrency = baseCurrency; 
+            window.baseCurrency = org.base_currency;
+            if (!localStorage.getItem('user_pref_currency')) window.selectedCurrency = window.baseCurrency; 
         }
-        const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', profile.organization_id);
-        currencyRates = {};
-        currencyRates[baseCurrency] = 1;
-        if (rates && rates.length > 0) rates.forEach(r => currencyRates[r.currency_code] = Number(r.rate));
-        console.log(`[SYSTEM] Currency Ready. Base: ${baseCurrency}`);
+        const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id);
+        window.currencyRates = {};
+        window.currencyRates[window.baseCurrency] = 1;
+        if (rates && rates.length > 0) rates.forEach(r => window.currencyRates[r.currency_code] = Number(r.rate));
+        console.log(`[SYSTEM] Currency Ready. Base: ${window.baseCurrency}`);
     } catch (e) { console.error("Currency Error:", e); }
 };
 
 window.convertAmount = (amount, fromCurr, toCurr) => {
     if (!amount) return 0;
-    const fromRate = currencyRates[fromCurr];
-    const toRate = currencyRates[toCurr];
-    
-    // Strict Check: Rate Missing
+    const fromRate = window.currencyRates[fromCurr];
+    const toRate = window.currencyRates[toCurr];
     if (fromCurr !== toCurr && (!fromRate || !toRate)) return null; 
-
-    if (fromCurr === baseCurrency) return amount * toRate;
-    if (toCurr === baseCurrency) return amount / fromRate;
+    if (fromCurr === window.baseCurrency) return amount * toRate;
+    if (toCurr === window.baseCurrency) return amount / fromRate;
     return amount; 
 };
 
 window.formatPrice = (amount) => {
     if (!amount && amount !== 0) return '-';
-    const converted = window.convertAmount(amount, baseCurrency, selectedCurrency);
+    const converted = window.convertAmount(amount, window.baseCurrency, window.selectedCurrency);
     if (converted === null) return `<span class="text-red-500 font-bold text-[10px] bg-red-50 px-1 rounded">SET RATE</span>`;
     const isWeak = converted > 1000; 
-    return `${selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: isWeak?0:2, maximumFractionDigits: isWeak?0:2})}`;
+    return `${window.selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: isWeak?0:2, maximumFractionDigits: isWeak?0:2})}`;
 };
 
 window.changeCurrency = (curr) => {
-    selectedCurrency = curr;
+    window.selectedCurrency = curr;
     const activeEl = document.querySelector('.nav-item.nav-active');
     if (activeEl) window.router(activeEl.id.replace('nav-', ''));
 };
 
 window.getCurrencySelectorHTML = () => {
-    const options = SUPPORTED_CURRENCIES.map(c => `<option value="${c}" ${selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join('');
+    const options = SUPPORTED_CURRENCIES.map(c => `<option value="${c}" ${window.selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join('');
     return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`;
 };
 
 // --- INITIALIZATION ---
 window.onload = async () => {
-    window.logoutAction = logout; // Attach logout
-    
+    window.logoutAction = logout;
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
 
@@ -103,20 +105,18 @@ window.onload = async () => {
         }
         if (!prof || !prof.organization_id) { window.location.href = 'setup.html'; return; }
         
-        profile = prof;
+        window.profile = prof;
         await window.initCurrency();
         
         // Hide/Show based on Role
-        const role = profile.role;
+        const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
         if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
         else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
         else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
 
-        // Check Name
-        if ((profile.full_name || '').length < 3) document.getElementById('name-modal').style.display = 'flex';
+        if ((window.profile.full_name || '').length < 3) document.getElementById('name-modal').style.display = 'flex';
 
-        // Start App
         window.router(role === 'barman' ? 'bar' : 'inventory');
 
     } catch (e) {
@@ -128,7 +128,7 @@ window.onload = async () => {
 window.saveName = async () => {
     const name = document.getElementById('userNameInput').value;
     if (name.length < 3) return window.showNotification("Invalid Name", "error");
-    await supabase.from('profiles').update({ full_name: name }).eq('id', profile.id);
+    await supabase.from('profiles').update({ full_name: name }).eq('id', window.profile.id);
     document.getElementById('name-modal').style.display = 'none';
     location.reload();
 };
@@ -157,26 +157,25 @@ window.router = async (view) => {
     }, 50);
 };
 
-// ================= MODULES (Defined on Window) =================
+// ================= MODULES =================
 
 // --- 1. INVENTORY ---
 window.renderInventory = async (c) => {
     const isPOView = window.currentInvView === 'po'; 
-    const stock = await getInventory(profile.organization_id);
-    // Filter logic
-    const filteredStock = (profile.role === 'manager' || profile.role === 'finance') ? stock : stock.filter(x => x.location_id === profile.assigned_location_id);
-    const showPrice = profile.role === 'manager' || profile.role === 'finance';
+    const stock = await getInventory(window.profile.organization_id);
+    const filteredStock = (window.profile.role === 'manager' || window.profile.role === 'finance') ? stock : stock.filter(x => x.location_id === window.profile.assigned_location_id);
+    const showPrice = window.profile.role === 'manager' || window.profile.role === 'finance';
 
     let content = '';
     
     if (isPOView) {
-        const { data: pos } = await supabase.from('purchase_orders').select('*').eq('organization_id', profile.organization_id).order('created_at', {ascending:false});
+        const { data: pos } = await supabase.from('purchase_orders').select('*').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
         content = `<table class="w-full text-left"><thead class="bg-slate-50 border-b"><tr><th class="py-3 pl-4">Date</th><th>Supplier</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>
         ${(pos||[]).map(p => `<tr><td class="py-3 pl-4 text-xs font-bold">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-xs font-bold uppercase">${p.supplier_name}</td><td class="text-xs font-mono">${window.formatPrice(p.total_cost)}</td><td><span class="text-[10px] font-bold px-2 py-1 rounded ${p.status==='Pending'?'bg-yellow-100 text-yellow-800':'bg-green-100 text-green-800'}">${p.status}</span></td><td>${p.status==='Pending'?`<button onclick="window.receivePO('${p.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded">RECEIVE</button>`:'-'}</td></tr>`).join('')}
         </tbody></table>`;
     } else {
         content = `<table class="w-full text-left"><thead class="bg-slate-50 border-b"><tr><th class="py-3 pl-4">Item</th>${showPrice?`<th>Cost</th><th>Price</th>`:''}<th>Store</th><th>Qty</th><th>Action</th></tr></thead><tbody>
-        ${filteredStock.map(i => `<tr><td class="py-3 pl-4"><div class="font-bold uppercase text-xs">${i.products?.name}</div><div class="text-[9px] text-slate-400 font-bold uppercase">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs font-bold">${window.formatPrice(i.products.selling_price)}</td>`:''} <td class="text-xs font-bold text-gray-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg">${i.quantity} <span class="text-[9px] text-slate-400">${i.products?.unit}</span></td><td class="text-right pr-4">${profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold border px-3 py-1 rounded hover:bg-slate-50">MOVE</button>`:''}</td></tr>`).join('')}
+        ${filteredStock.map(i => `<tr><td class="py-3 pl-4"><div class="font-bold uppercase text-xs">${i.products?.name}</div><div class="text-[9px] text-slate-400 font-bold uppercase">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs font-bold">${window.formatPrice(i.products.selling_price)}</td>`:''} <td class="text-xs font-bold text-gray-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg">${i.quantity} <span class="text-[9px] text-slate-400">${i.products?.unit}</span></td><td class="text-right pr-4">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold border px-3 py-1 rounded hover:bg-slate-50">MOVE</button>`:''}</td></tr>`).join('')}
         </tbody></table>`;
     }
 
@@ -187,38 +186,53 @@ window.renderInventory = async (c) => {
             <button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-5 py-2 text-xs font-bold rounded-full ${!isPOView?'bg-white shadow text-slate-900':'text-slate-500'}">STOCK</button>
             <button onclick="window.currentInvView='po'; window.router('inventory')" class="px-5 py-2 text-xs font-bold rounded-full ${isPOView?'bg-white shadow text-slate-900':'text-slate-500'}">LPO</button>
         </div>
-        <div class="flex gap-2">${profile.role==='manager'?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-4 bg-blue-600">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-4">New Item</button>`:''}</div>
+        <div class="flex gap-2">${window.profile.role==='manager'?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-4 bg-blue-600">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-4">New Item</button>`:''}</div>
     </div>
     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">${content}</div>`;
 };
 
-// --- 2. BAR (POS) ---
+// --- 2. BAR (POS) - UI FIXED HERE ---
 window.renderBar = async (c) => {
-    const inv = await getInventory(profile.organization_id);
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).eq('type', 'department');
+    const inv = await getInventory(window.profile.organization_id);
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department');
     
     // Set active location
-    if (profile.role === 'barman') window.activePosLocationId = profile.assigned_location_id;
+    if (window.profile.role === 'barman') window.activePosLocationId = window.profile.assigned_location_id;
     else if (!window.activePosLocationId && locs.length) window.activePosLocationId = locs[0].id;
 
     // Filter Items
     const items = inv.filter(x => x.location_id === window.activePosLocationId && (x.products.category === 'Beverage' || !x.products.category));
 
-    const storeSelect = (profile.role !== 'barman') ? `<select onchange="window.switchBar(this.value)" class="bg-white border rounded px-3 py-2 text-sm font-bold mb-4">${locs.map(l => `<option value="${l.id}" ${window.activePosLocationId===l.id?'selected':''}>${l.name}</option>`).join('')}</select>` : '';
+    // FIXED STORE SELECTOR UI
+    const storeSelect = (window.profile.role !== 'barman') ? 
+        `<div class="mb-6 bg-white p-4 border rounded-xl shadow-sm flex items-center gap-3">
+            <span class="text-xs font-bold text-slate-500 uppercase">Current Counter:</span>
+            <select onchange="window.switchBar(this.value)" class="bg-slate-50 border border-slate-300 text-slate-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 font-bold flex-1">
+                ${locs.map(l => `<option value="${l.id}" ${window.activePosLocationId===l.id?'selected':''}>${l.name}</option>`).join('')}
+            </select>
+        </div>` : '';
 
     c.innerHTML = `
     ${storeSelect}
     <div class="flex flex-col lg:flex-row gap-6 h-[calc(100vh-140px)]">
         <div class="flex-1 overflow-y-auto">
             <div class="flex justify-between items-center mb-4 sticky top-0 bg-slate-50 py-2 z-10"><h1 class="text-2xl font-bold uppercase">POS Terminal</h1>${window.getCurrencySelectorHTML()}</div>
-            <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
-                ${items.map(x => `<div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-4 border rounded-xl cursor-pointer hover:border-slate-900 transition relative overflow-hidden shadow-sm"><div class="absolute top-0 right-0 bg-slate-100 px-2 py-1 text-[10px] font-bold rounded-bl-lg">Qty: ${x.quantity}</div><p class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">${x.products.name}</p><p class="text-lg font-bold text-slate-900">${window.formatPrice(x.products.selling_price)}</p></div>`).join('')}
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 pb-20">
+                ${items.length ? items.map(x => `
+                <div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-4 border rounded-xl cursor-pointer hover:border-slate-900 transition relative overflow-hidden shadow-sm group">
+                    <div class="absolute top-0 right-0 bg-slate-100 px-2 py-1 text-[10px] font-bold rounded-bl-lg">Stock: ${x.quantity}</div>
+                    <p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 mt-2">${x.products.name}</p>
+                    <p class="text-xl font-bold text-slate-900">${window.formatPrice(x.products.selling_price)}</p>
+                </div>`).join('') : '<div class="col-span-3 text-center p-10 text-slate-400">No stock in this counter.</div>'}
             </div>
         </div>
         <div class="w-full lg:w-96 bg-white border rounded-2xl p-6 h-full flex flex-col shadow-xl">
-            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-sm uppercase">Ticket</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500">CLEAR</button></div>
-            <div id="cart-list" class="flex-1 overflow-y-auto space-y-2"></div>
-            <div class="pt-4 border-t mt-auto"><div class="flex justify-between text-xl font-bold mb-4"><span>Total</span><span id="cart-total">${window.formatPrice(0)}</span></div><button onclick="window.checkout()" class="btn-primary py-4 text-sm shadow-lg">CHARGE</button></div>
+            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-sm uppercase">Current Ticket</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500 hover:text-red-700">CLEAR ALL</button></div>
+            <div id="cart-list" class="flex-1 overflow-y-auto space-y-2 pr-1"></div>
+            <div class="pt-4 border-t mt-auto">
+                <div class="flex justify-between text-xl font-bold mb-4 text-slate-900"><span>Total</span><span id="cart-total">${window.formatPrice(0)}</span></div>
+                <button onclick="window.checkout()" class="btn-primary py-4 text-sm shadow-lg w-full">CHARGE SALE</button>
+            </div>
         </div>
     </div>`;
     window.renderCart();
@@ -234,56 +248,67 @@ window.addCart = (n,p,id) => {
 window.renderCart = () => { 
     const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); 
     let sum=0; 
-    l.innerHTML=(window.cart||[]).map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between text-xs font-bold p-2 bg-slate-50 rounded border border-slate-100"><span>${i.name} x${i.qty}</span><button onclick="window.remCart('${i.id}')" class="text-red-500">X</button></div>`}).join(''); 
+    l.innerHTML=(window.cart||[]).map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between items-center text-xs font-bold p-3 bg-slate-50 rounded-lg border border-slate-100"><span>${i.name} <span class="text-slate-400">x${i.qty}</span></span><button onclick="window.remCart('${i.id}')" class="text-red-500 hover:bg-red-50 p-1 rounded">✕</button></div>`}).join(''); 
     t.innerText=window.formatPrice(sum); 
 };
 window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.renderCart(); };
-window.checkout = async () => { if(!window.cart.length) return; try{await processBarSale(profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), profile.id); window.showNotification("Sale Complete", "success"); window.cart=[]; window.renderCart(); window.router('bar');}catch(e){window.showNotification(e.message, "error");}};
+window.checkout = async () => { 
+    if(!window.cart.length) return; 
+    try {
+        await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id); 
+        window.showNotification("Sale Complete", "success"); 
+        window.cart=[]; 
+        window.renderCart(); 
+        window.router('bar'); // Refresh to show new stock
+    } catch(e) {
+        window.showNotification(e.message, "error");
+    }
+};
 
 // --- 3. APPROVALS ---
 window.renderApprovals = async (c) => {
-    if(profile.role === 'storekeeper') return c.innerHTML = '<div class="p-10 text-center">Access Denied</div>';
-    const reqs = await getPendingApprovals(profile.organization_id);
+    if(window.profile.role === 'storekeeper') return c.innerHTML = '<div class="p-10 text-center">Access Denied</div>';
+    const reqs = await getPendingApprovals(window.profile.organization_id);
     c.innerHTML = `
     <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Pending Approvals</h1>
     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>
-    ${reqs.length ? reqs.map(r => `<tr class="border-b"><td class="p-4 font-bold text-sm uppercase">${r.products?.name}</td><td class="text-blue-600 font-mono font-bold">${r.quantity}</td><td class="text-xs uppercase text-slate-500">To: ${r.to_loc?.name}</td><td class="text-right p-4"><button onclick="window.doApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded font-bold">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs text-slate-400">No pending requests.</td></tr>'}
+    ${reqs.length ? reqs.map(r => `<tr class="border-b last:border-0"><td class="p-4 font-bold text-sm uppercase text-slate-700">${r.products?.name}</td><td class="text-blue-600 font-mono font-bold">${r.quantity}</td><td class="text-xs uppercase text-slate-500">To: ${r.to_loc?.name}</td><td class="text-right p-4"><button onclick="window.doApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded font-bold hover:bg-slate-800">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs text-slate-400">No pending requests.</td></tr>'}
     </tbody></table></div>`;
 };
-window.doApprove = async (id) => { if(confirm("Approve transfer?")) try{await respondToApproval(id, 'approved', profile.id); window.showNotification("Approved","success"); window.router('approvals');}catch(e){window.showNotification(e.message,"error");} };
+window.doApprove = async (id) => { if(confirm("Approve transfer?")) try{await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Approved","success"); window.router('approvals');}catch(e){window.showNotification(e.message,"error");} };
 
-// --- 4. REPORTS (FIXED: PROFIT & FILTERS & CSV) ---
+// --- 4. REPORTS ---
 window.renderReports = async (c) => {
     const isVariance = window.currentRepView === 'variance';
-    const showFinancials = (profile.role === 'manager' || profile.role === 'finance');
+    const showFinancials = (window.profile.role === 'manager' || window.profile.role === 'finance');
 
     if(isVariance) {
-        const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name)').eq('organization_id', profile.organization_id).order('created_at', {ascending:false});
+        const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
         c.innerHTML = `
         <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Reconciliation</h1>
-            <div class="flex gap-2 bg-slate-100 p-1 rounded-full"><button onclick="window.currentRepView='general'; window.router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500">GENERAL</button><button class="px-5 py-2 text-xs font-bold rounded-full bg-white shadow text-slate-900">VARIANCE</button></div>
-            <button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-slate-900">NEW STOCK TAKE</button>
+            <div class="flex gap-2 bg-slate-100 p-1 rounded-full"><button onclick="window.currentRepView='general'; window.router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500 hover:text-slate-900">GENERAL</button><button class="px-5 py-2 text-xs font-bold rounded-full bg-white shadow text-slate-900">VARIANCE</button></div>
+            <button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-red-600 hover:bg-red-700 shadow-red-200">NEW STOCK TAKE</button>
         </div>
-        <div class="bg-white rounded-2xl border shadow-sm"><table class="w-full text-left"><thead><tr class="bg-slate-50 border-b"><th class="p-3 text-xs uppercase">Date</th><th>Location</th><th>User</th><th>Action</th></tr></thead><tbody>
-        ${(takes||[]).map(t => `<tr><td class="p-3 text-xs font-bold">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs uppercase">${t.locations?.name}</td><td class="text-xs">${t.profiles?.full_name}</td><td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px] underline">VIEW</button></td></tr>`).join('')}
+        <div class="bg-white rounded-2xl border shadow-sm overflow-hidden"><table class="w-full text-left"><thead><tr class="bg-slate-50 border-b"><th class="p-3 pl-4 text-xs uppercase">Date</th><th>Location</th><th>User</th><th>Action</th></tr></thead><tbody>
+        ${(takes||[]).map(t => `<tr><td class="p-3 pl-4 text-xs font-bold text-slate-600">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs uppercase font-bold">${t.locations?.name}</td><td class="text-xs text-slate-500">${t.profiles?.full_name}</td><td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px] underline">VIEW REPORT</button></td></tr>`).join('')}
         </tbody></table></div>`;
     } else {
-        const { data: logs } = await supabase.from('transactions').select(`*, products (name, category), locations:to_location_id (name), from_loc:from_location_id (name), profiles:user_id (full_name, role)`).eq('organization_id', profile.organization_id).order('created_at', { ascending: false }).limit(200);
-        currentLogs = logs || [];
-        const totalSales = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
-        const totalProfit = currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
+        const { data: logs } = await supabase.from('transactions').select(`*, products (name, category), locations:to_location_id (name), from_loc:from_location_id (name), profiles:user_id (full_name, role)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(200);
+        window.currentLogs = logs || [];
+        const totalSales = window.currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
+        const totalProfit = window.currentLogs.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
 
         c.innerHTML = `
         <div class="flex justify-between items-center mb-8 gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Reports</h1>${showFinancials ? window.getCurrencySelectorHTML() : ''}</div>
             <div class="flex gap-2 bg-slate-100 p-1 rounded-full"><button class="px-5 py-2 text-xs font-bold rounded-full bg-white shadow text-slate-900">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-5 py-2 text-xs font-bold rounded-full text-slate-500 hover:text-slate-700">VARIANCE</button></div>
-            <button onclick="window.exportCSV()" class="btn-primary w-auto px-4 bg-green-700 hover:bg-green-800">EXPORT CSV</button>
+            <button onclick="window.exportCSV()" class="btn-primary w-auto px-4 bg-green-700 hover:bg-green-800 text-xs">EXPORT CSV</button>
         </div>
-        ${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Total Revenue</p><p class="text-3xl font-mono font-bold">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Gross Profit</p><p class="text-3xl font-mono font-bold text-green-600">${window.formatPrice(totalProfit)}</p></div></div>` : ''}
+        ${showFinancials ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Total Revenue</p><p class="text-3xl font-mono font-bold text-slate-900">${window.formatPrice(totalSales)}</p></div><div class="bg-white p-6 border rounded-2xl shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase mb-2">Gross Profit</p><p class="text-3xl font-mono font-bold text-green-600">${window.formatPrice(totalProfit)}</p></div></div>` : ''}
         <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
             <button onclick="window.filterLogs('all')" class="px-4 py-1.5 bg-slate-900 text-white text-[10px] font-bold rounded-full">ALL</button>
-            <button onclick="window.filterLogs('sale')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full">SALES</button>
-            <button onclick="window.filterLogs('transfer')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full">TRANSFERS</button>
-            <button onclick="window.filterLogs('consumption')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full">CONSUMPTION</button>
+            <button onclick="window.filterLogs('sale')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full hover:bg-slate-50">SALES</button>
+            <button onclick="window.filterLogs('transfer')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full hover:bg-slate-50">TRANSFERS</button>
+            <button onclick="window.filterLogs('consumption')" class="px-4 py-1.5 bg-white border text-slate-600 text-[10px] font-bold rounded-full hover:bg-slate-50">CONSUMPTION</button>
         </div>
         <div class="bg-white rounded-2xl border shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left" id="reportTable"><thead class="bg-slate-50 border-b"><tr><th class="p-3 pl-4 text-xs uppercase">Date</th><th class="text-xs uppercase">User</th><th class="text-xs uppercase">Item</th><th class="text-xs uppercase">Type</th><th class="text-xs uppercase">Detail</th><th class="text-xs uppercase">Qty</th></tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
         window.filterLogs('all');
@@ -291,56 +316,58 @@ window.renderReports = async (c) => {
 };
 
 window.filterLogs = (type) => {
-    let f = currentLogs || [];
+    let f = window.currentLogs || [];
     if(type === 'sale') f = f.filter(l => l.type === 'sale');
     if(type === 'transfer') f = f.filter(l => ['pending_transfer', 'transfer_completed', 'receive'].includes(l.type));
     if(type === 'consumption') f = f.filter(l => l.to_location_id && l.locations?.type === 'department');
     
     const b = document.getElementById('logsBody');
     if(!b) return;
+    if(!f.length) { b.innerHTML='<tr><td colspan="6" class="text-center text-xs text-gray-400 py-12 uppercase tracking-widest">No matching records found.</td></tr>'; return; }
+    
     b.innerHTML = f.map(l => {
         let tag = l.type.toUpperCase(), det = `${l.from_loc?.name||'-'} > ${l.locations?.name||'-'}`;
         if(l.type === 'sale') { tag='SALE'; det='POS'; }
         if(l.type === 'receive') { tag='IN'; det='Supplier'; }
-        return `<tr class="border-b hover:bg-slate-50"><td class="p-3 pl-4 text-xs font-bold text-slate-600">${new Date(l.created_at).toLocaleDateString()}</td><td class="text-xs font-bold">${l.profiles?.full_name}</td><td class="text-xs font-bold uppercase">${l.products?.name}</td><td><span class="text-[9px] font-bold px-2 py-1 rounded bg-slate-100">${tag}</span></td><td class="text-xs text-slate-500">${det}</td><td class="font-mono text-sm font-bold">${l.quantity}</td></tr>`;
+        return `<tr class="border-b hover:bg-slate-50"><td class="p-3 pl-4 text-xs font-bold text-slate-600">${new Date(l.created_at).toLocaleDateString()}</td><td class="text-xs font-bold">${l.profiles?.full_name}</td><td class="text-xs font-bold uppercase">${l.products?.name}</td><td><span class="text-[9px] font-bold px-2 py-1 rounded bg-slate-100 border border-slate-200">${tag}</span></td><td class="text-xs text-slate-500">${det}</td><td class="font-mono text-sm font-bold">${l.quantity}</td></tr>`;
     }).join('');
 };
 
 window.exportCSV = () => {
     let rows = [["Date","User","Item","Category","Type","Detail","Qty","Value"]];
-    currentLogs.forEach(l => {
+    window.currentLogs.forEach(l => {
         rows.push([new Date(l.created_at).toLocaleDateString(), l.profiles?.full_name, l.products?.name, l.products?.category, l.type, `${l.from_loc?.name||''}->${l.locations?.name||''}`, l.quantity, l.total_value||0]);
     });
     let csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.join(",")).join("\n");
     let link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", "report.csv");
+    link.setAttribute("download", `report_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
 };
 
 // --- 5. STAFF ---
 window.renderStaff = async (c) => {
-    const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', profile.organization_id);
-    const { data: inv } = await supabase.from('staff_invites').select('*').eq('organization_id', profile.organization_id).eq('status', 'pending');
+    const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', window.profile.organization_id);
+    const { data: inv } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
     c.innerHTML = `
     <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">+ INVITE</button></div>
     <div class="bg-white rounded-2xl border shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>
-    ${staff.map(s => `<tr class="border-b"><td class="p-4 font-bold text-sm uppercase">${s.full_name}</td><td class="text-xs uppercase font-bold text-blue-600">${s.role}</td><td class="text-right p-4"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}
+    ${staff.map(s => `<tr class="border-b"><td class="p-4 font-bold text-sm uppercase text-slate-700">${s.full_name}</td><td class="text-xs uppercase font-bold text-blue-600">${s.role}</td><td class="text-right p-4"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}
     ${inv.map(i => `<tr class="bg-yellow-50 border-b"><td class="p-4 text-sm font-medium text-slate-600">${i.email}</td><td class="text-xs uppercase text-slate-400">${i.role}</td><td class="text-right p-4"><span class="text-[9px] bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-bold">PENDING</span></td></tr>`).join('')}
     </tbody></table></div>`;
 };
 
 // --- 6. SETTINGS ---
 window.renderSettings = async (c) => {
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id);
-    const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', profile.organization_id);
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
+    const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id);
     const rateMap = {};
     if(rates) rates.forEach(r => rateMap[r.currency_code] = r.rate);
     
     const rateRows = ['TZS', 'USD', 'EUR', 'GBP', 'KES'].map(code => {
-        const isBase = code === baseCurrency;
-        const val = isBase ? 1 : (rateMap[code] || ''); 
+        const isBase = code === window.baseCurrency;
+        const val = isBase ? 1 : (rateMap[code] || '');
         return `<div class="flex justify-between items-center border-b py-3 last:border-0"><div class="flex gap-3 items-center"><div class="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold">${code[0]}</div><div><p class="font-bold text-sm">${code}</p><p class="text-[10px] text-slate-400 font-bold">${isBase?'Base':'Foreign'}</p></div></div><div>${isBase?'<span class="font-mono px-4 text-slate-400">1.00</span>':`<input id="rate-${code}" type="number" value="${val}" placeholder="Rate..." class="w-24 border rounded px-2 py-1 text-right font-mono font-bold text-sm">`}</div></div>`;
     }).join('');
 
@@ -348,8 +375,8 @@ window.renderSettings = async (c) => {
     <h1 class="text-3xl font-bold uppercase text-slate-900 mb-8">Settings</h1>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div class="bg-white rounded-2xl border shadow-sm p-6">
-            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] font-bold bg-slate-900 text-white px-3 py-1.5 rounded">+ ADD</button></div>
-            <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase">${l.name}</td><td class="text-xs font-bold uppercase text-gray-400">${l.type}</td><td class="text-right"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}</tbody></table>
+            <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">+ ADD</button></div>
+            <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type}</td><td class="text-right"><span class="text-[9px] bg-green-100 text-green-800 px-2 py-1 rounded font-bold">ACTIVE</span></td></tr>`).join('')}</tbody></table>
         </div>
         <div class="bg-white rounded-2xl border shadow-sm p-6">
             <div class="flex justify-between items-center mb-4 pb-4 border-b"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
@@ -362,9 +389,9 @@ window.renderSettings = async (c) => {
 window.saveRates = async () => {
     const updates = [];
     ['TZS', 'USD', 'EUR', 'GBP', 'KES'].forEach(code => {
-        if (code === baseCurrency) return;
+        if (code === window.baseCurrency) return;
         const val = document.getElementById(`rate-${code}`).value;
-        if(val) updates.push({ organization_id: profile.organization_id, currency_code: code, rate: parseFloat(val) });
+        if(val) updates.push({ organization_id: window.profile.organization_id, currency_code: code, rate: parseFloat(val) });
     });
     if(!updates.length) return;
     const { error } = await supabase.from('exchange_rates').upsert(updates, { onConflict: 'organization_id, currency_code' });
@@ -376,7 +403,7 @@ window.saveRates = async () => {
 
 // --- MODALS ---
 window.addProductModal = () => {
-    if(profile.role !== 'manager') return;
+    if(window.profile.role !== 'manager') return;
     const opts = SUPPORTED_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
@@ -385,7 +412,7 @@ window.addProductModal = () => {
         <div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Food">Food</option><option value="Beverage">Beverage</option><option value="Supplies">Supplies</option></select></div>
         <div class="input-group mb-0"><label class="input-label">Unit</label><select id="pUnit" class="input-field"><option value="Pcs">Pcs</option><option value="Kg">Kg</option><option value="Ltr">Ltr</option><option value="Box">Box</option></select></div>
     </div>
-    <div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field font-bold">${opts}</select></div>
+    <div class="input-group mb-4"><label class="input-label">Input Currency</label><select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">${opts}</select></div>
     <div class="grid grid-cols-2 gap-4 mb-6"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div>
     <button onclick="window.execAddProduct()" class="btn-primary">SAVE PRODUCT</button>`;
     document.getElementById('modal').style.display = 'flex';
@@ -400,18 +427,20 @@ window.execAddProduct = async () => {
     const selling = parseFloat(document.getElementById('pS').value);
     
     if(!name || isNaN(cost)) return window.showNotification("Invalid input", "error");
-    const costBase = window.convertAmount(cost, curr, baseCurrency);
-    const sellingBase = window.convertAmount(selling, curr, baseCurrency);
+    const costBase = window.convertAmount(cost, curr, window.baseCurrency);
+    const sellingBase = window.convertAmount(selling, curr, window.baseCurrency);
     if(costBase === null) return window.showNotification(`Set rate for ${curr} first`, "error");
 
-    await supabase.from('products').insert({ name, category: cat, unit, cost_price: costBase, selling_price: sellingBase, organization_id: profile.organization_id });
+    await supabase.from('products').insert({ name, category: cat, unit, cost_price: costBase, selling_price: sellingBase, organization_id: window.profile.organization_id });
     document.getElementById('modal').style.display = 'none';
     window.showNotification("Product Added", "success");
     window.router('inventory');
 };
 
 window.createPOModal = async () => {
-    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
+    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name');
+    if(!prods || !prods.length) return window.showNotification("No products found. Add items first.", "error");
+
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-6 uppercase text-center">Create LPO</h3>
     <div class="input-group"><label class="input-label">Supplier</label><input id="lpoSup" class="input-field"></div>
@@ -437,7 +466,7 @@ window.execCreatePO = async () => {
         }
     });
 
-    const { data: po } = await supabase.from('purchase_orders').insert({ organization_id: profile.organization_id, created_by: profile.id, supplier_name: sup, total_cost: total, status: 'Pending' }).select().single();
+    const { data: po } = await supabase.from('purchase_orders').insert({ organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_name: sup, total_cost: total, status: 'Pending' }).select().single();
     await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id})));
     document.getElementById('modal').style.display = 'none';
     window.showNotification("LPO Created", "success");
@@ -447,11 +476,11 @@ window.execCreatePO = async () => {
 window.receivePO = async (id) => {
     if(!confirm("Receive Stock?")) return;
     const { data: items } = await supabase.from('po_items').select('*').eq('po_id', id);
-    const { data: mainStore } = await supabase.from('locations').select('id').eq('organization_id', profile.organization_id).eq('type', 'main_store').single();
+    const { data: mainStore } = await supabase.from('locations').select('id').eq('organization_id', window.profile.organization_id).eq('type', 'main_store').single();
     
     for(const item of items) {
-        await supabase.rpc('add_stock_safe', { p_product_id: item.product_id, p_location_id: mainStore.id, p_quantity: item.quantity, p_org_id: profile.organization_id });
-        await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: item.product_id, to_location_id: mainStore.id, type: 'receive', quantity: item.quantity });
+        await supabase.rpc('add_stock_safe', { p_product_id: item.product_id, p_location_id: mainStore.id, p_quantity: item.quantity, p_org_id: window.profile.organization_id });
+        await supabase.from('transactions').insert({ organization_id: window.profile.organization_id, user_id: window.profile.id, product_id: item.product_id, to_location_id: mainStore.id, type: 'receive', quantity: item.quantity });
     }
     await supabase.from('purchase_orders').update({ status: 'Received' }).eq('id', id);
     window.showNotification("Stock Received", "success");
@@ -459,9 +488,9 @@ window.receivePO = async (id) => {
 };
 
 window.addStockModal = async () => { 
-    if(profile.role !== 'manager') return;
-    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', profile.organization_id).order('name');
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id);
+    if(window.profile.role !== 'manager') return;
+    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name');
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-6 uppercase text-center">Receive Stock</h3>
     <div class="input-group"><label class="input-label">Item</label><select id="sP" class="input-field">${prods.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></div>
@@ -476,8 +505,8 @@ window.execAddStock = async () => {
     const lid = document.getElementById('sL').value;
     const qty = document.getElementById('sQ').value;
     if(qty <= 0) return;
-    await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: profile.organization_id });
-    await supabase.from('transactions').insert({ organization_id: profile.organization_id, user_id: profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty });
+    await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: window.profile.organization_id });
+    await supabase.from('transactions').insert({ organization_id: window.profile.organization_id, user_id: window.profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty });
     document.getElementById('modal').style.display = 'none';
     window.showNotification("Stock Added", "success");
     window.router('inventory');
@@ -485,7 +514,7 @@ window.execAddStock = async () => {
 
 window.issueModal = async (name, id, fromLoc) => {
     window.selectedDestinationId = null;
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id).neq('id', fromLoc);
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).neq('id', fromLoc);
     const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join('');
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-4 uppercase text-center">Move: ${name}</h3>
@@ -505,14 +534,14 @@ window.execIssue = async (pid, fromLoc) => {
     const qty = document.getElementById('tQty').value;
     if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error");
     try {
-        await transferStock(pid, fromLoc, window.selectedDestinationId, qty, profile.id, profile.organization_id);
+        await transferStock(pid, fromLoc, window.selectedDestinationId, qty, window.profile.id, window.profile.organization_id);
         document.getElementById('modal').style.display = 'none';
         window.showNotification("Request Sent", "success");
     } catch(e) { window.showNotification(e.message, "error"); }
 };
 
 window.inviteModal = async () => {
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id);
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-6 uppercase text-center">Invite Staff</h3>
     <div class="input-group"><label class="input-label">Email</label><input id="iE" class="input-field"></div>
@@ -525,7 +554,7 @@ window.inviteModal = async () => {
 window.execInvite = async () => {
     const email = document.getElementById('iE').value;
     if(!email) return;
-    await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' });
+    await supabase.from('staff_invites').insert({ email, role: document.getElementById('iR').value, organization_id: window.profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' });
     document.getElementById('modal').style.display = 'none';
     window.showNotification("Sent", "success");
     window.router('staff');
@@ -541,14 +570,14 @@ window.addStoreModal = () => {
 };
 
 window.execAddStore = async () => {
-    await createLocation(profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value);
+    await createLocation(window.profile.organization_id, document.getElementById('nN').value, document.getElementById('nT').value);
     document.getElementById('modal').style.display = 'none';
     window.router('settings');
 };
 
 // Stock Take
 window.newStockTakeModal = async () => {
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', profile.organization_id);
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-6 uppercase text-center">New Stock Take</h3>
     <div class="input-group"><label class="input-label">Location</label><select id="stLoc" class="input-field">${locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
@@ -558,7 +587,7 @@ window.newStockTakeModal = async () => {
 
 window.startStockTake = async () => {
     const locId = document.getElementById('stLoc').value;
-    const inv = await getInventory(profile.organization_id);
+    const inv = await getInventory(window.profile.organization_id);
     const items = inv.filter(x => x.location_id === locId);
     document.getElementById('modal-content').innerHTML = `
     <h3 class="font-bold text-lg mb-4 uppercase text-center">Count Items</h3>
@@ -570,7 +599,7 @@ window.startStockTake = async () => {
 
 window.saveStockTake = async (locId) => {
     const inputs = document.querySelectorAll('.st-input');
-    const { data: st } = await supabase.from('stock_takes').insert({ organization_id: profile.organization_id, location_id: locId, conducted_by: profile.id, status: 'Completed' }).select().single();
+    const { data: st } = await supabase.from('stock_takes').insert({ organization_id: window.profile.organization_id, location_id: locId, conducted_by: window.profile.id, status: 'Completed' }).select().single();
     const items = Array.from(inputs).map(i => ({ stock_take_id: st.id, product_id: i.getAttribute('data-id'), system_qty: i.getAttribute('data-sys'), physical_qty: i.value || 0 }));
     await supabase.from('stock_take_items').insert(items);
     document.getElementById('modal').style.display = 'none';
