@@ -1,105 +1,124 @@
 import { supabase } from './supabase.js';
 
-// --- HII NDIO FUNCTION ILIYOKUWA INAKOSEKANA ---
+// --- ORGANIZATION ---
 export async function createOrganization(name, userId) {
-    // 1. Insert Organization
-    const { data: org, error: orgError } = await supabase
-        .from('organizations')
-        .insert({ name: name.toUpperCase() })
-        .select()
-        .single();
-
+    const { data: org, error: orgError } = await supabase.from('organizations').insert({ name: name.toUpperCase() }).select().single();
     if (orgError) throw orgError;
 
-    // 2. Update Profile to be Manager immediately (Backup)
-    const { error: profError } = await supabase
-        .from('profiles')
-        .update({ 
-            organization_id: org.id,
-            role: 'manager',
-            full_name: 'Manager' 
-        })
-        .eq('id', userId);
-
-    // Note: Hata kama profile haipo (Trigger issue), Setup.html yako step 2 inafanya UPSERT, kwa hiyo hii ni safe.
-    
+    // Auto-update profile
+    await supabase.from('profiles').update({ organization_id: org.id, role: 'manager', full_name: 'Manager' }).eq('id', userId);
     return org;
 }
-// ------------------------------------------------
 
-// 1. INVENTORY & CATALOG
-export async function getInventory(orgId) {
-    const { data, error } = await supabase
-        .from('inventory')
-        .select('*, products(name, selling_price, cost_price, unit), locations(name, type)')
-        .eq('organization_id', orgId);
+// --- LOCATION ---
+export async function createLocation(orgId, name, type, parentId = null) {
+    const { data, error } = await supabase.from('locations').insert({ organization_id: orgId, name: name.toUpperCase(), type, parent_location_id: parentId }).select().single();
     if (error) throw error;
     return data;
 }
 
-// 2. TRANSFER REQUEST
-export async function transferStock(productId, fromLocId, toLocId, quantity, userId, orgId) {
-    const { data: source } = await supabase.from('inventory').select('quantity').eq('product_id', productId).eq('location_id', fromLocId).single();
-    if (!source || Number(source.quantity) < Number(quantity)) throw new Error("Stock haitoshi.");
-
-    const { error } = await supabase.from('transactions').insert({
-        organization_id: orgId,
-        user_id: userId,
-        product_id: productId,
-        from_location_id: fromLocId,
-        to_location_id: toLocId,
-        type: 'pending_transfer',
-        quantity: quantity,
-        total_value: 0,
-        profit: 0
-    });
-    if (error) throw error;
-    return "Request Sent";
-}
-
-// 3. APPROVALS
-export async function getPendingApprovals(orgId) {
-    const { data } = await supabase.from('transactions')
-        .select('*, products(name), from_loc:from_location_id(name), to_loc:to_location_id(name)')
-        .eq('organization_id', orgId)
-        .eq('type', 'pending_transfer');
-    return data || [];
-}
-
-export async function respondToApproval(transId, action, userId) {
-    const { data: trans } = await supabase.from('transactions').select('*').eq('id', transId).single();
-    if (!trans) throw new Error("Transaction Missing");
-
-    if (action === 'approved') {
-        const { data: source } = await supabase.from('inventory').select('*').eq('product_id', trans.product_id).eq('location_id', trans.from_location_id).single();
-        if(Number(source.quantity) < Number(trans.quantity)) throw new Error("Stock Low");
-        await supabase.from('inventory').update({ quantity: Number(source.quantity) - Number(trans.quantity) }).eq('id', source.id);
-
-        const { data: dest } = await supabase.from('inventory').select('*').eq('product_id', trans.product_id).eq('location_id', trans.to_location_id).single();
-        if (dest) {
-            await supabase.from('inventory').update({ quantity: Number(dest.quantity) + Number(trans.quantity) }).eq('id', dest.id);
-        } else {
-            await supabase.from('inventory').insert({ organization_id: trans.organization_id, product_id: trans.product_id, location_id: trans.to_location_id, quantity: trans.quantity });
-        }
-        await supabase.from('transactions').update({ type: 'transfer_completed', performed_by: userId }).eq('id', transId);
-    } else {
-        await supabase.from('transactions').update({ type: 'transfer_rejected', performed_by: userId }).eq('id', transId);
+// --- INVENTORY ---
+export async function getInventory(orgId) {
+    const { data, error } = await supabase
+        .from('inventory')
+        .select(`
+            id, quantity, location_id, product_id,
+            products (id, name, cost_price, selling_price, category, unit),
+            locations (id, name, type)
+        `)
+        .eq('organization_id', orgId);
+    
+    if (error) {
+        console.error("Inventory Fetch Error:", error);
+        return [];
     }
+    return data;
 }
 
-// 4. BAR POS
+// --- STOCK TRANSFER (Updated to use 'stock_movements' table) ---
+export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) {
+    // 1. Verify Stock
+    const { data: stock } = await supabase.from('inventory').select('quantity').eq('product_id', prodId).eq('location_id', fromLoc).single();
+    if (!stock || Number(stock.quantity) < Number(qty)) throw new Error("Insufficient stock available for transfer");
+
+    // 2. Create Request in 'stock_movements'
+    const { error } = await supabase.from('stock_movements').insert({
+        organization_id: orgId,
+        product_id: prodId,
+        from_location_id: fromLoc,
+        to_location_id: toLoc,
+        quantity: qty,
+        requested_by: userId,
+        status: 'pending'
+    });
+    
+    if (error) throw error;
+    return "Transfer Requested";
+}
+
+// --- APPROVALS (Updated to fetch from 'stock_movements') ---
+export async function getPendingApprovals(orgId) {
+    const { data, error } = await supabase.from('stock_movements')
+        .select(`*, products(name), from_loc:from_location_id(name), to_loc:to_location_id(name)`)
+        .eq('organization_id', orgId)
+        .eq('status', 'pending');
+        
+    if (error) return [];
+    return data;
+}
+
+export async function respondToApproval(moveId, status, userId) {
+    if (status === 'approved') {
+        const { data: move } = await supabase.from('stock_movements').select('*').eq('id', moveId).single();
+        if(!move) throw new Error("Movement request not found");
+
+        // USE RPC FOR ATOMIC TRANSACTION (Safety)
+        const { error } = await supabase.rpc('transfer_stock_safe', {
+            p_product_id: move.product_id,
+            p_from_loc: move.from_location_id,
+            p_to_loc: move.to_location_id,
+            p_qty: move.quantity
+        });
+        
+        if (error) throw error;
+
+        // Log Transaction
+        await supabase.from('transactions').insert({
+            organization_id: move.organization_id,
+            user_id: userId,
+            product_id: move.product_id,
+            from_location_id: move.from_location_id,
+            to_location_id: move.to_location_id,
+            type: 'transfer_completed',
+            quantity: move.quantity
+        });
+    }
+
+    // Update Request Status
+    await supabase.from('stock_movements').update({ status, approved_by: userId }).eq('id', moveId);
+}
+
+// --- POS & SALES (Updated to use RPC) ---
 export async function processBarSale(orgId, locId, items, userId) {
+    let total = 0;
+    
     for (const item of items) {
-        const { data: product } = await supabase.from('products').select('cost_price').eq('id', item.product_id).single();
-        const { data: stock } = await supabase.from('inventory').select('*').eq('product_id', item.product_id).eq('location_id', locId).single();
-        if (!stock || Number(stock.quantity) < Number(item.qty)) throw new Error(`Out of stock: ${item.name}`);
-        
-        await supabase.from('inventory').update({ quantity: Number(stock.quantity) - Number(item.qty) }).eq('id', stock.id);
-        
-        const salesValue = item.price * item.qty;
-        const costValue = product.cost_price * item.qty;
-        const profit = salesValue - costValue;
-        
+        // 1. Get Cost
+        const { data: prod } = await supabase.from('products').select('cost_price').eq('id', item.product_id).single();
+        const cost = prod?.cost_price || 0;
+        const lineTotal = item.qty * item.price;
+        const lineProfit = lineTotal - (item.qty * cost);
+        total += lineTotal;
+
+        // 2. Reduce Stock via RPC
+        const { error: stockError } = await supabase.rpc('deduct_stock', {
+            p_product_id: item.product_id,
+            p_location_id: locId,
+            p_quantity: item.qty
+        });
+        if (stockError) throw new Error(`Stock error: ${stockError.message}`);
+
+        // 3. Log Sale
         await supabase.from('transactions').insert({
             organization_id: orgId,
             user_id: userId,
@@ -107,21 +126,9 @@ export async function processBarSale(orgId, locId, items, userId) {
             from_location_id: locId,
             type: 'sale',
             quantity: item.qty,
-            total_value: salesValue,
-            profit: profit
+            total_value: lineTotal,
+            profit: lineProfit
         });
     }
-}
-
-// 5. UTILS (CREATE LOCATION IPO HAPA)
-export async function createLocation(orgId, name, type, parentId = null) {
-    // Nimeongeza logic ya parentId ili kuendana na setup yako kama unataka
-    const { data, error } = await supabase
-        .from('locations')
-        .insert({ organization_id: orgId, name: name.toUpperCase(), type })
-        .select()
-        .single();
-    
-    if(error) throw error;
-    return data;
+    return { success: true, total };
 }
