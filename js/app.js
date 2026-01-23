@@ -14,11 +14,7 @@ window.cachedLocations = [];
 window.cachedSuppliers = [];
 window.selectedPaymentMethod = 'cash'; 
 
-// 🔥 UNITS ZOTE KAMA ULIVYOTAKA
-const ALL_UNITS = [
-    'Crate', 'Carton', 'Dozen', 'Pcs', 'Kg', 'Ltr', 'Box', 'Bag', 'Packet', 'Set', 'Roll', 'Tin', 'Bundle', 'Pallet'
-];
-
+const ALL_UNITS = ['Crate', 'Carton', 'Dozen', 'Pcs', 'Kg', 'Ltr', 'Box', 'Bag', 'Packet', 'Set', 'Roll', 'Tin', 'Bundle', 'Pallet'];
 const ALL_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'];
 
 // --- UTILITIES ---
@@ -47,27 +43,27 @@ window.premiumConfirm = (title, desc, btnText, callback) => {
     });
 };
 
-// 🔥 NEW: PROFILE VIEWER WITH HISTORY
+// 🔥 FIX 1: PROFILE VIEWER (EMAIL & HISTORY)
 window.viewUserProfile = async (userId) => {
     if(!userId) return;
     try {
         const { data: user } = await supabase.from('profiles').select('*').eq('id', userId).single();
         if(!user) return;
         
-        // 1. Fill Details
         const assignedLoc = window.cachedLocations.find(l => l.id === user.assigned_location_id)?.name || 'Unassigned';
         document.getElementById('pv-name').innerText = user.full_name || 'Unknown';
         document.getElementById('pv-role').innerText = `${user.role.replace('_', ' ')} • ${assignedLoc}`;
         document.getElementById('pv-initials').innerText = (user.full_name || 'U').charAt(0).toUpperCase();
         document.getElementById('pv-phone').innerText = user.phone || 'Not Provided';
-        document.getElementById('pv-email').innerText = 'User ID: ' + user.id.substring(0,8) + '...'; // Email is private in Supabase profiles by default unless synced
+        // 🔥 FIX: Onyesha Email halisi
+        document.getElementById('pv-email').innerText = user.email || 'No Email'; 
         document.getElementById('pv-joined').innerText = new Date(user.created_at || Date.now()).toLocaleDateString();
         
         const statusEl = document.getElementById('pv-status');
         statusEl.innerText = user.status || 'ACTIVE';
         statusEl.className = `px-2 py-1 rounded text-[9px] font-bold uppercase ${user.status==='suspended'?'bg-red-500 text-white':'bg-green-500 text-white'}`;
 
-        // 2. Fetch Activity History
+        // Fetch History
         const { data: history } = await supabase.from('transactions').select('*, products(name)').eq('user_id', userId).order('created_at', {ascending:false}).limit(10);
         const histList = document.getElementById('activity-list');
         
@@ -75,7 +71,7 @@ window.viewUserProfile = async (userId) => {
             histList.innerHTML = history.map(h => `
                 <div class="flex justify-between items-center py-2 border-b border-slate-50 last:border-0">
                     <div>
-                        <div class="font-bold text-slate-700 uppercase">${h.type}</div>
+                        <div class="font-bold text-slate-700 uppercase text-[10px]">${h.type}</div>
                         <div class="text-[9px] text-slate-400">${h.products?.name} (Qty: ${h.quantity})</div>
                     </div>
                     <div class="text-[9px] text-slate-400 text-right">
@@ -89,14 +85,13 @@ window.viewUserProfile = async (userId) => {
         }
 
         document.getElementById('profile-viewer').style.display = 'flex';
-        window.switchProfileTab('details'); // Reset to details tab
+        window.switchProfileTab('details');
     } catch(e) { console.error(e); }
 };
 
 window.switchProfileTab = (tab) => {
     document.querySelectorAll('.tab-active').forEach(t => t.classList.remove('tab-active', 'border-b-2', 'border-slate-900', 'text-slate-900'));
     document.getElementById(`tab-${tab}`).classList.add('tab-active', 'border-b-2', 'border-slate-900', 'text-slate-900');
-    
     document.getElementById('view-details').style.display = tab === 'details' ? 'block' : 'none';
     document.getElementById('view-activity').style.display = tab === 'activity' ? 'block' : 'none';
 };
@@ -191,7 +186,6 @@ window.renderBar = async (c) => {
     if (window.profile.role === 'barman') window.activePosLocationId = window.profile.assigned_location_id;
     else if (!window.activePosLocationId && locs.length) window.activePosLocationId = locs[0].id;
     
-    // FILTER: Only show items in Active Location AND Category is 'Beverage'
     const items = inv.filter(x => x.location_id === window.activePosLocationId && x.products.category === 'Beverage');
     
     const storeSelect = (window.profile.role !== 'barman') ? `<div class="mb-8 flex items-center gap-4"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Active Counter:</span><select onchange="window.switchBar(this.value)" class="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer shadow-sm min-w-[200px]">${locs.map(l => `<option value="${l.id}" ${window.activePosLocationId===l.id?'selected':''}>${l.name}</option>`).join('')}</select></div>` : '';
@@ -220,7 +214,7 @@ window.renderApprovals = async (c) => {
 };
 window.confirmApprove = (id) => { window.premiumConfirm("Authorize Transfer?", "This will move stock permanently.", "Authorize", async () => { try{await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Transfer Authorized", "success"); window.router('approvals');}catch(e){window.showNotification(e.message, "error");} }); };
 
-// 4. REPORTS (FILTERED & AUDITED)
+// 4. REPORTS (AUDITED & FIXED TAGS)
 window.renderReports = async (c) => {
     const isVariance = window.currentRepView === 'variance';
     if(isVariance) {
@@ -233,7 +227,6 @@ window.renderReports = async (c) => {
         
         const isController = window.profile.role === 'financial_controller';
 
-        // 🔥 FILTERS UI
         c.innerHTML = `
         <div class="flex flex-col gap-6 mb-8">
             <div class="flex justify-between items-center gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Reports</h1>${window.getCurrencySelectorHTML()}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">VARIANCE</button></div></div>
@@ -280,11 +273,13 @@ window.filterReport = () => {
 
     b.innerHTML = f.map(l => {
         const isVoid = l.status === 'void';
-        let tag = (l.payment_method || '-').toUpperCase(), badge='bg-slate-100 text-slate-500';
+        let badge='bg-slate-100 text-slate-500', tag = '';
         
+        // 🔥 FIX: TAGS LOGIC
         if(isVoid) { tag='VOID'; badge='bg-red-50 text-red-500 border-red-100 line-through'; }
-        else if(l.type === 'sale') { badge='bg-green-50 text-green-700 border-green-100'; }
+        else if(l.type === 'sale') { tag = (l.payment_method || 'CASH').toUpperCase(); badge='bg-green-50 text-green-700 border-green-100'; }
         else if(l.type === 'receive') { tag='STOCK IN'; badge='bg-blue-50 text-blue-700 border-blue-100'; }
+        else if(l.type === 'transfer') { tag='TRANSFER'; badge='bg-orange-50 text-orange-700 border-orange-100'; }
         
         return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition group ${isVoid ? 'bg-slate-50 opacity-50 grayscale' : ''}">
             <td class="p-4 pl-6 text-xs font-bold text-slate-500 ${isVoid ? 'line-through' : ''}">${new Date(l.created_at).toLocaleDateString()}<span class="block text-[10px] opacity-50">${new Date(l.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></td>
@@ -319,7 +314,6 @@ window.saveTransactionEdit = async () => {
 
 window.deleteTransaction = async (id) => {
     window.premiumConfirm("Void Transaction?", "This will invalidate the record but keep it for audit.", "Void", async () => {
-        // 🔥 FIX: Use the Safe Void RPC to reverse stock!
         const { error } = await supabase.rpc('void_transaction_safe', { 
             p_trans_id: id, 
             p_admin_id: window.profile.id 
@@ -336,7 +330,7 @@ window.deleteTransaction = async (id) => {
 window.exportCSV = () => { let rows=[["Date","Time","User Name","Role","Assigned Location","Item","Category","Transaction Type","Payment Method","Status","Quantity","Value"]]; const start=document.getElementById('repStart')?.value, end=document.getElementById('repEnd')?.value, loc=document.getElementById('repLoc')?.value; let f=window.currentLogs; if(start) f=f.filter(l=>new Date(l.created_at)>=new Date(start)); if(end) f=f.filter(l=>new Date(l.created_at)<=new Date(end+'T23:59:59')); if(loc&&loc!=='all') f=f.filter(l=>(l.locations?.name===loc||l.from_loc?.name===loc)); f.forEach(l=>{ const locName=window.cachedLocations.find(loc=>loc.id===l.profiles?.assigned_location_id)?.name||'Unassigned'; rows.push([new Date(l.created_at).toLocaleDateString(),new Date(l.created_at).toLocaleTimeString(),l.profiles?.full_name,l.profiles?.role,locName,l.products?.name,l.products?.category,l.type,l.payment_method||'-',l.status||'valid',l.quantity,l.total_value||0]); }); let csvContent="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n"); let link=document.createElement("a"); link.setAttribute("href",encodeURI(csvContent)); link.setAttribute("download",`Report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); };
 window.confirmReceive = (id) => { window.premiumConfirm("Confirm Receipt", "Are you sure you have physically received these items?", "Receive Stock", () => window.receivePO(id)); };
 
-// 5. STAFF (RESTRICT CONTROLLER COUNT)
+// 5. STAFF (REFINED SUSPEND LOGIC)
 window.renderStaff = async (c) => {
     const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', window.profile.organization_id);
     const { data: inv } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
@@ -345,7 +339,16 @@ window.renderStaff = async (c) => {
     <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-6 text-xs text-slate-400 uppercase tracking-widest">Name & Role</th><th class="text-xs text-slate-400 uppercase tracking-widest">Contact</th><th class="text-xs text-slate-400 uppercase tracking-widest">Location</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th></tr></thead><tbody>
     ${staff.map(s => {
         const locName = window.cachedLocations.find(l => l.id === s.assigned_location_id)?.name || 'Unassigned';
-        return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition"><td class="p-6"><button onclick="window.viewUserProfile('${s.id}')" class="text-left"><div class="font-bold text-sm uppercase text-slate-700 hover:text-blue-600 transition">${s.full_name}</div><div class="text-[10px] uppercase font-bold text-blue-600 mt-1">${s.role.replace('_',' ')}</div></button></td><td class="text-xs font-medium text-slate-600"><div>${s.phone || '-'}</div><div class="text-[10px] text-slate-400 mt-0.5">User ID: ...${s.id.slice(-6)}</div></td><td class="text-xs font-bold uppercase text-slate-500">${locName}</td><td class="text-right p-6">${s.status==='suspended'?`<button onclick="window.toggleUserStatus('${s.id}', 'active')" class="text-[9px] bg-green-100 text-green-800 px-3 py-1.5 rounded-full font-bold uppercase">Activate</button>`:`<button onclick="window.openReassignModal('${s.id}', '${s.role}', '${s.assigned_location_id}')" class="text-[9px] bg-red-100 text-red-800 px-3 py-1.5 rounded-full font-bold uppercase hover:bg-red-200 transition">Suspend</button>`}</td></tr>`;
+        // 🔥 FIX: Show email clearly
+        return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition"><td class="p-6"><button onclick="window.viewUserProfile('${s.id}')" class="text-left"><div class="font-bold text-sm uppercase text-slate-700 hover:text-blue-600 transition">${s.full_name}</div><div class="text-[10px] uppercase font-bold text-blue-600 mt-1">${s.role.replace('_',' ')}</div></button></td><td class="text-xs font-medium text-slate-600"><div>${s.phone || '-'}</div><div class="text-[10px] text-slate-400 mt-0.5">${s.email}</div></td><td class="text-xs font-bold uppercase text-slate-500">${locName}</td><td class="text-right p-6">
+            ${s.status==='suspended'?
+                `<button onclick="window.toggleUserStatus('${s.id}', 'active')" class="text-[9px] bg-green-100 text-green-800 px-3 py-1.5 rounded-full font-bold uppercase mr-2">Activate</button>`:
+                `<div class="flex justify-end gap-2">
+                    <button onclick="window.toggleUserStatus('${s.id}', 'suspended')" class="text-[9px] bg-orange-100 text-orange-800 px-3 py-1.5 rounded-full font-bold uppercase hover:bg-orange-200 transition">Suspend</button>
+                    <button onclick="window.openReassignModal('${s.id}', '${s.role}', '${s.assigned_location_id}')" class="text-[9px] bg-red-100 text-red-800 px-3 py-1.5 rounded-full font-bold uppercase hover:bg-red-200 transition">Reassign</button>
+                </div>`
+            }
+        </td></tr>`;
     }).join('')}
     ${inv.map(i => {
         const locName = window.cachedLocations.find(l => l.id === i.assigned_location_id)?.name || 'Unassigned';
@@ -354,12 +357,14 @@ window.renderStaff = async (c) => {
     </tbody></table></div>`;
 };
 
+// 🔥 FIX: Toggle Status Only (Temporary Suspend)
 window.toggleUserStatus = async (id, status) => {
     if(id === window.profile.id) return window.showNotification("Cannot suspend self", "error");
-    window.premiumConfirm(`${status === 'suspended' ? 'Activate' : 'Suspend'} User?`, `User will ${status === 'suspended' ? 'regain' : 'lose'} access.`, "Confirm", async () => {
+    const msg = status === 'suspended' ? 'Suspend temporarily? User can be reactivated.' : 'Activate user?';
+    window.premiumConfirm(`${status === 'suspended' ? 'Suspend' : 'Activate'} User`, msg, "Confirm", async () => {
         await supabase.from('profiles').update({ status }).eq('id', id);
         window.showNotification("Status Updated", "success");
-        window.renderStaff(document.getElementById('app-view')); // Refresh list
+        window.renderStaff(document.getElementById('app-view'));
     });
 };
 
@@ -370,22 +375,22 @@ window.openReassignModal = (id, role, loc) => {
     document.getElementById('reassign-modal').style.display = 'flex';
 };
 
+// 🔥 FIX: Reassign Logic (Suspend Old + Invite New)
 window.executeReassign = async () => {
     const oldUserId = document.getElementById('suspendUserId').value;
     const role = document.getElementById('suspendUserRole').value;
     const loc = document.getElementById('suspendUserLoc').value;
     const newEmail = document.getElementById('reassignEmail').value;
 
-    if(!newEmail) {
-        window.toggleUserStatus(oldUserId, 'suspended');
-        document.getElementById('reassign-modal').style.display = 'none';
-        return;
-    }
+    if(!newEmail) return window.showNotification("Email required for reassign", "error");
 
+    // 1. Suspend Old User
     await supabase.from('profiles').update({ status: 'suspended' }).eq('id', oldUserId);
+    // 2. Invite New User (History remains with old ID, new user starts fresh)
     await supabase.from('staff_invites').insert({ email: newEmail, role: role, organization_id: window.profile.organization_id, assigned_location_id: loc, status: 'pending', replaced_user_id: oldUserId });
+    
     document.getElementById('reassign-modal').style.display = 'none';
-    window.showNotification("User Suspended & Replacement Invited", "success");
+    window.showNotification("User Replaced. Invite Sent.", "success");
     window.router('staff');
 };
 
@@ -499,7 +504,6 @@ window.openSupplierModal = async (id = null) => {
 window.saveSupplier = async () => {
     const id = document.getElementById('supId').value;
     const name = document.getElementById('supName').value;
-    // 🔥 FIX: Ensure orgId is present
     const orgId = window.profile.organization_id; 
     
     if(!name || !orgId) return window.showNotification("Name Required", "error");
@@ -536,7 +540,6 @@ window.execAddStore = async () => { await createLocation(window.profile.organiza
 window.createPOModal = async () => { const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id); if(!prods || !prods.length) return window.showNotification("No products found.", "error"); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Create LPO</h3><div class="input-group"><label class="input-label">Supplier</label>${(sups && sups.length) ? `<select id="lpoSup" class="input-field">${sups.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}</select>` : `<input id="lpoSupText" class="input-field" placeholder="Enter Supplier Name">`}</div><div class="bg-slate-50 p-4 rounded-xl border mb-4 max-h-60 overflow-y-auto">${prods.map(p => `<div class="flex items-center gap-2 mb-2"><input type="checkbox" class="lpo-check w-4 h-4" value="${p.id}" data-price="${p.cost_price}"><span class="flex-1 text-xs font-bold uppercase">${p.name}</span><input type="number" id="qty-${p.id}" class="w-16 input-field p-1 text-xs" placeholder="Qty"></div>`).join('')}</div><button onclick="window.execCreatePO()" class="btn-primary">GENERATE ORDER</button>`; document.getElementById('modal').style.display = 'flex'; };
 window.execCreatePO = async () => { const supSelect = document.getElementById('lpoSup'), supText = document.getElementById('lpoSupText'), supId = supSelect ? supSelect.value : null, supName = supSelect ? supSelect.options[supSelect.selectedIndex].text : supText.value, checks = document.querySelectorAll('.lpo-check:checked'); if(!supName || !checks.length) return window.showNotification("Invalid Order", "error"); let total = 0, items = []; checks.forEach(c => { const qty = document.getElementById(`qty-${c.value}`).value; if(qty > 0) { const cost = c.getAttribute('data-price'); total += (qty * cost); items.push({ product_id: c.value, quantity: qty, unit_cost: cost }); } }); const poData = { organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_name: supName, total_cost: total, status: 'Pending' }; if(supId) poData.supplier_id = supId; const { data: po } = await supabase.from('purchase_orders').insert(poData).select().single(); await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id}))); document.getElementById('modal').style.display = 'none'; window.showNotification("LPO Created", "success"); window.currentInvView = 'po'; window.router('inventory'); };
 window.receivePO = async (id) => { 
-    // 🔥 FIX: Use the WAC (Weighted Average Cost) RPC
     const { error } = await supabase.rpc('receive_stock_wac', { 
         p_po_id: id, 
         p_user_id: window.profile.id, 
@@ -560,7 +563,7 @@ window.addProductModal = () => {
     if(window.profile.role !== 'manager') return; 
     const opts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join(''); 
     
-    // 🔥 NEW: Use Global Units List
+    // Use Global Units List
     const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join('');
 
     document.getElementById('modal-content').innerHTML = `
@@ -602,7 +605,7 @@ window.execAddProduct = async () => {
     const costBase = window.convertAmount(cost, curr, window.baseCurrency); 
     const sellingBase = window.convertAmount(selling, curr, window.baseCurrency); 
     
-    // 🔥 FIX: Handle null conversion safely
+    // Handle null conversion safely
     if(costBase === null) return window.showNotification(`Set rate for ${curr} first`, "error"); 
     
     await supabase.from('products').insert({ 
