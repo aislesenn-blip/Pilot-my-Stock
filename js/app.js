@@ -6,19 +6,15 @@ import { supabase } from './supabase.js';
 window.profile = null;
 window.currentLogs = [];
 window.cart = [];
-window.baseCurrency = 'USD'; // Itabadilika kulingana na DB
+window.baseCurrency = 'USD'; 
 window.currencyRates = {};
 window.selectedCurrency = 'USD';
 window.activePosLocationId = null;
 window.cachedLocations = [];
 window.cachedSuppliers = [];
-window.selectedPaymentMethod = 'cash'; // 🔥 NEW: Default Payment Method
+window.selectedPaymentMethod = 'cash'; 
 
-// LIST YA PESA
-const ALL_CURRENCIES = [
-    'TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 
-    'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'
-];
+const ALL_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'];
 
 // --- UTILITIES ---
 window.closeModalOutside = (e) => { if (e.target.id === 'modal') document.getElementById('modal').style.display = 'none'; };
@@ -72,126 +68,56 @@ window.onload = async () => {
 
     try {
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        if (!prof) {
-            await new Promise(r => setTimeout(r, 1000));
-            let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-            prof = retry.data;
-        }
+        if (!prof) { await new Promise(r => setTimeout(r, 1000)); let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); prof = retry.data; }
         if (!prof || !prof.organization_id) { window.location.href = 'setup.html'; return; }
-        
-        if (prof.status === 'suspended') {
-            await logout();
-            alert("Account Suspended. Contact Admin.");
-            return;
-        }
+        if (prof.status === 'suspended') { await logout(); alert("Account Suspended."); return; }
 
         window.profile = prof;
-        
         const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
         window.cachedLocations = locs || [];
-        
         const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id);
         window.cachedSuppliers = sups || [];
-
         await window.initCurrency();
         
-        if (!window.profile.full_name || window.profile.full_name.length < 3 || !window.profile.phone) {
-            document.getElementById('name-modal').style.display = 'flex';
-        }
+        if (!window.profile.full_name || window.profile.full_name.length < 3 || !window.profile.phone) document.getElementById('name-modal').style.display = 'flex';
 
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
-        // PERMISSIONS MATRIX
+        
         if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
         else if (role === 'financial_controller') hide(['nav-bar', 'nav-settings']); 
         else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
         else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
 
         window.router(role === 'barman' ? 'bar' : 'inventory');
-
     } catch (e) { console.error(e); }
 };
 
-window.saveName = async () => {
-    const name = document.getElementById('userNameInput').value;
-    const phone = document.getElementById('userPhoneInput').value;
-    if (name.length < 3) return window.showNotification("Enter Full Name", "error");
-    if (phone.length < 9) return window.showNotification("Enter Valid Phone", "error");
-    await supabase.from('profiles').update({ full_name: name, phone: phone }).eq('id', window.profile.id);
-    document.getElementById('name-modal').style.display = 'none';
-    location.reload();
-};
+window.saveName = async () => { const name = document.getElementById('userNameInput').value; const phone = document.getElementById('userPhoneInput').value; if (name.length < 3) return window.showNotification("Enter Full Name", "error"); if (phone.length < 9) return window.showNotification("Enter Valid Phone", "error"); await supabase.from('profiles').update({ full_name: name, phone: phone }).eq('id', window.profile.id); document.getElementById('name-modal').style.display = 'none'; location.reload(); };
+window.initCurrency = async () => { if (!window.profile) return; try { const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single(); if (org) { window.baseCurrency = org.base_currency || 'USD'; if (!localStorage.getItem('user_pref_currency')) window.selectedCurrency = window.baseCurrency; } const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id); window.currencyRates = {}; window.currencyRates[window.baseCurrency] = 1; if (rates && rates.length > 0) rates.forEach(r => window.currencyRates[r.currency_code] = Number(r.rate)); } catch (e) { console.error(e); } };
+window.convertAmount = (amount, fromCurr, toCurr) => { if (!amount) return 0; const fromRate = window.currencyRates[fromCurr]; const toRate = window.currencyRates[toCurr]; if (fromCurr !== toCurr && (!fromRate || !toRate)) return null; if (fromCurr === window.baseCurrency) return amount * toRate; if (toCurr === window.baseCurrency) return amount / fromRate; return amount; };
+window.formatPrice = (amount) => { if (!amount && amount !== 0) return '-'; let converted = window.convertAmount(amount, window.baseCurrency, window.selectedCurrency); if (converted === null) return `<button onclick="window.router('settings')" class="text-[9px] font-bold bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-100 cursor-pointer whitespace-nowrap">SET RATE</button>`; return `${window.selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`; };
+window.changeCurrency = (curr) => { window.selectedCurrency = curr; localStorage.setItem('user_pref_currency', curr); const activeEl = document.querySelector('.nav-item.nav-active'); if (activeEl) window.router(activeEl.id.replace('nav-', '')); };
+window.getCurrencySelectorHTML = () => { const options = ALL_CURRENCIES.map(c => `<option value="${c}" ${window.selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join(''); return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`; };
+window.router = async (view) => { const app = document.getElementById('app-view'); app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>'; document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active')); const navEl = document.getElementById(`nav-${view}`); if(navEl) navEl.classList.add('nav-active'); setTimeout(async () => { try { if (view === 'inventory') await window.renderInventory(app); else if (view === 'bar') await window.renderBar(app); else if (view === 'approvals') await window.renderApprovals(app); else if (view === 'reports') await window.renderReports(app); else if (view === 'staff') await window.renderStaff(app); else if (view === 'settings') await window.renderSettings(app); } catch (e) { console.error(e); app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`; } }, 50); };
 
-window.initCurrency = async () => {
-    if (!window.profile) return;
-    try {
-        const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single();
-        if (org) {
-            window.baseCurrency = org.base_currency || 'USD'; 
-            if (!localStorage.getItem('user_pref_currency')) window.selectedCurrency = window.baseCurrency; 
-        }
-        const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id);
-        window.currencyRates = {};
-        window.currencyRates[window.baseCurrency] = 1;
-        if (rates && rates.length > 0) rates.forEach(r => window.currencyRates[r.currency_code] = Number(r.rate));
-    } catch (e) { console.error(e); }
-};
-
-window.convertAmount = (amount, fromCurr, toCurr) => {
-    if (!amount) return 0;
-    const fromRate = window.currencyRates[fromCurr];
-    const toRate = window.currencyRates[toCurr];
-    if (fromCurr !== toCurr && (!fromRate || !toRate)) return null; 
-    if (fromCurr === window.baseCurrency) return amount * toRate;
-    if (toCurr === window.baseCurrency) return amount / fromRate;
-    return amount; 
-};
-
-window.formatPrice = (amount) => {
-    if (!amount && amount !== 0) return '-';
-    let converted = window.convertAmount(amount, window.baseCurrency, window.selectedCurrency);
-    if (converted === null) return `<button onclick="window.router('settings')" class="text-[9px] font-bold bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-100 cursor-pointer whitespace-nowrap">SET RATE</button>`;
-    return `${window.selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-};
-
-window.changeCurrency = (curr) => {
-    window.selectedCurrency = curr;
-    localStorage.setItem('user_pref_currency', curr);
-    const activeEl = document.querySelector('.nav-item.nav-active');
-    if (activeEl) window.router(activeEl.id.replace('nav-', ''));
-};
-
-window.getCurrencySelectorHTML = () => {
-    const options = ALL_CURRENCIES.map(c => `<option value="${c}" ${window.selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join('');
-    return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`;
-};
-
-window.router = async (view) => {
-    const app = document.getElementById('app-view');
-    app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active'));
-    const navEl = document.getElementById(`nav-${view}`);
-    if(navEl) navEl.classList.add('nav-active');
-    setTimeout(async () => {
-        try {
-            if (view === 'inventory') await window.renderInventory(app);
-            else if (view === 'bar') await window.renderBar(app);
-            else if (view === 'approvals') await window.renderApprovals(app);
-            else if (view === 'reports') await window.renderReports(app);
-            else if (view === 'staff') await window.renderStaff(app);
-            else if (view === 'settings') await window.renderSettings(app);
-        } catch (e) {
-            console.error(e);
-            app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`;
-        }
-    }, 50);
-};
-
-// 1. INVENTORY
+// 1. INVENTORY (STORES)
 window.renderInventory = async (c) => {
     const isPOView = window.currentInvView === 'po'; 
     const stock = await getInventory(window.profile.organization_id);
-    const filteredStock = (window.profile.role === 'manager' || window.profile.role.includes('finance') || window.profile.role === 'financial_controller') ? stock : stock.filter(x => x.location_id === window.profile.assigned_location_id);
+    
+    // 🔥 FILTER: Barman sees ONLY Beverage. Others see ALL.
+    let filteredStock = stock;
+    if (window.profile.role === 'barman') {
+        filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id && x.products.category === 'Beverage');
+    } else if (window.profile.role === 'storekeeper') {
+        // Storekeeper sees assigned location (Camp Store) or All if Main Store
+        filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id);
+    } else {
+        // Manager/Finance sees everything
+        filteredStock = stock;
+    }
+
     const showPrice = window.profile.role === 'manager' || window.profile.role === 'financial_controller' || window.profile.role === 'finance';
 
     let content = '';
@@ -220,26 +146,28 @@ window.renderInventory = async (c) => {
     c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div><div class="flex gap-1 bg-slate-100 p-1.5 rounded-xl"><button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button><button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button></div><div class="flex gap-3">${window.profile.role==='manager'?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
 };
 
-// 2. BAR (POS) - 🔥 NOW WITH PAYMENT METHODS
+// 2. BAR (POS) - 🔥 STRICT BEVERAGE ONLY
 window.renderBar = async (c) => {
     const inv = await getInventory(window.profile.organization_id);
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department');
     if (window.profile.role === 'barman') window.activePosLocationId = window.profile.assigned_location_id;
     else if (!window.activePosLocationId && locs.length) window.activePosLocationId = locs[0].id;
-    const items = inv.filter(x => x.location_id === window.activePosLocationId && (x.products.category === 'Beverage' || !x.products.category));
+    
+    // 🔥 FILTER: Only show items in Active Location AND Category is 'Beverage'
+    const items = inv.filter(x => x.location_id === window.activePosLocationId && x.products.category === 'Beverage');
+    
     const storeSelect = (window.profile.role !== 'barman') ? `<div class="mb-8 flex items-center gap-4"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Active Counter:</span><select onchange="window.switchBar(this.value)" class="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer shadow-sm min-w-[200px]">${locs.map(l => `<option value="${l.id}" ${window.activePosLocationId===l.id?'selected':''}>${l.name}</option>`).join('')}</select></div>` : '';
     
-    // PAYMENT METHOD BUTTONS UI
     const payMethods = ['cash', 'mobile', 'card', 'credit'].map(m => 
         `<button onclick="window.setPaymentMethod('${m}')" class="pay-btn flex-1 py-2 text-[10px] font-bold uppercase rounded-lg border transition ${window.selectedPaymentMethod === m ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}">${m}</button>`
     ).join('');
 
-    c.innerHTML = `${storeSelect} <div class="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)]"><div class="flex-1 overflow-y-auto pr-2"><div class="flex justify-between items-center mb-6 sticky top-0 bg-[#F8FAFC] py-2 z-10"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">POS Terminal</h1>${window.getCurrencySelectorHTML()}</div><div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">${items.length ? items.map(x => `<div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-5 rounded-2xl border border-slate-100 cursor-pointer hover:border-slate-900 transition-all duration-200 hover:shadow-lg hover:-translate-y-1 group relative overflow-hidden"><div class="flex justify-between items-start mb-2"><div class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 font-bold text-[10px] group-hover:bg-slate-900 group-hover:text-white transition">${x.products.name.charAt(0)}</div><span class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full border border-slate-100 group-hover:border-slate-200">Qty: ${x.quantity}</span></div><p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 truncate">${x.products.name}</p><p class="text-lg font-bold text-slate-900 font-mono">${window.formatPrice(x.products.selling_price)}</p></div>`).join('') : '<div class="col-span-full py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl"><p class="text-slate-400 font-bold text-sm uppercase">No products available here.</p></div>'}</div></div><div class="w-full lg:w-96 bg-white border border-slate-200 rounded-[32px] p-8 h-full flex flex-col shadow-2xl shadow-slate-200/50"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase text-slate-900 tracking-widest">Current Order</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded transition">CLEAR ALL</button></div><div id="cart-list" class="flex-1 overflow-y-auto space-y-3 pr-1"></div><div class="pt-6 border-t border-slate-100 mt-auto"><div class="mb-4"><p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Payment Method</p><div class="flex gap-2">${payMethods}</div></div><div class="flex justify-between items-end mb-6"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Amount</span><span id="cart-total" class="text-3xl font-bold text-slate-900 font-mono">${window.formatPrice(0)}</span></div><button onclick="window.confirmCheckout()" class="w-full bg-[#0F172A] text-white py-4 rounded-2xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 shadow-xl shadow-slate-900/20 active:scale-95 transition">Charge Sale</button></div></div></div>`;
+    c.innerHTML = `${storeSelect} <div class="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)]"><div class="flex-1 overflow-y-auto pr-2"><div class="flex justify-between items-center mb-6 sticky top-0 bg-[#F8FAFC] py-2 z-10"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">POS Terminal</h1>${window.getCurrencySelectorHTML()}</div><div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">${items.length ? items.map(x => `<div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-5 rounded-2xl border border-slate-100 cursor-pointer hover:border-slate-900 transition-all duration-200 hover:shadow-lg hover:-translate-y-1 group relative overflow-hidden"><div class="flex justify-between items-start mb-2"><div class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 font-bold text-[10px] group-hover:bg-slate-900 group-hover:text-white transition">${x.products.name.charAt(0)}</div><span class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full border border-slate-100 group-hover:border-slate-200">Qty: ${x.quantity}</span></div><p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 truncate">${x.products.name}</p><p class="text-lg font-bold text-slate-900 font-mono">${window.formatPrice(x.products.selling_price)}</p></div>`).join('') : '<div class="col-span-full py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl"><p class="text-slate-400 font-bold text-sm uppercase">No beverages available.</p></div>'}</div></div><div class="w-full lg:w-96 bg-white border border-slate-200 rounded-[32px] p-8 h-full flex flex-col shadow-2xl shadow-slate-200/50"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase text-slate-900 tracking-widest">Current Order</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded transition">CLEAR ALL</button></div><div id="cart-list" class="flex-1 overflow-y-auto space-y-3 pr-1"></div><div class="pt-6 border-t border-slate-100 mt-auto"><div class="mb-4"><p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Payment Method</p><div class="flex gap-2">${payMethods}</div></div><div class="flex justify-between items-end mb-6"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Amount</span><span id="cart-total" class="text-3xl font-bold text-slate-900 font-mono">${window.formatPrice(0)}</span></div><button onclick="window.confirmCheckout()" class="w-full bg-[#0F172A] text-white py-4 rounded-2xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 shadow-xl shadow-slate-900/20 active:scale-95 transition">Charge Sale</button></div></div></div>`;
     window.renderCart();
 };
 
 window.switchBar = (id) => { window.activePosLocationId = id; window.router('bar'); };
-window.setPaymentMethod = (method) => { window.selectedPaymentMethod = method; window.router('bar'); }; // Re-render to update active button
+window.setPaymentMethod = (method) => { window.selectedPaymentMethod = method; window.router('bar'); }; 
 window.addCart = (n,p,id) => { if(!window.cart) window.cart=[]; const x=window.cart.find(c=>c.id===id); if(x)x.qty++; else window.cart.push({name:n,price:p,id,qty:1}); window.renderCart(); };
 window.renderCart = () => { const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); let sum=0; l.innerHTML=(window.cart||[]).map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group"><div class="flex flex-col"><span class="text-xs font-bold text-slate-800 uppercase">${i.name}</span><span class="text-[10px] text-slate-400 font-mono">${window.formatPrice(i.price)} x ${i.qty}</span></div><button onclick="window.remCart('${i.id}')" class="w-6 h-6 flex items-center justify-center rounded-full text-slate-300 hover:bg-red-100 hover:text-red-500 transition">✕</button></div>`}).join(''); t.innerText=window.formatPrice(sum); };
 window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.renderCart(); };
@@ -254,7 +182,7 @@ window.renderApprovals = async (c) => {
 };
 window.confirmApprove = (id) => { window.premiumConfirm("Authorize Transfer?", "This will move stock permanently.", "Authorize", async () => { try{await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Transfer Authorized", "success"); window.router('approvals');}catch(e){window.showNotification(e.message,"error");} }); };
 
-// 4. REPORTS (WITH VOID STATUS LOGIC)
+// 4. REPORTS
 window.renderReports = async (c) => {
     const isVariance = window.currentRepView === 'variance';
     if(isVariance) {
@@ -280,7 +208,6 @@ window.filterReport = () => {
     if(end) f = f.filter(l => new Date(l.created_at) <= new Date(end + 'T23:59:59'));
     if(loc && loc !== 'all') f = f.filter(l => (l.locations?.name === loc || l.from_loc?.name === loc));
     
-    // Filter out VOID transactions from Totals
     const activeTx = f.filter(l => l.status !== 'void');
     const totalSales = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
     const totalProfit = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
@@ -332,7 +259,6 @@ window.saveTransactionEdit = async () => {
     window.router('reports');
 };
 
-// 🔥 VOID TRANSACTION LOGIC (Soft Delete)
 window.deleteTransaction = async (id) => {
     window.premiumConfirm("Void Transaction?", "This will invalidate the record but keep it for audit.", "Void", async () => {
         await supabase.from('transactions').update({ status: 'void' }).eq('id', id);
@@ -541,7 +467,7 @@ window.issueModal = async (name, id, fromLoc) => { window.selectedDestinationId 
 window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white')); el.classList.add('bg-slate-900', 'text-white'); window.selectedDestinationId = id; };
 window.execIssue = async (pid, fromLoc) => { const qty = document.getElementById('tQty').value; if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error"); try { await transferStock(pid, fromLoc, window.selectedDestinationId, qty, window.profile.id, window.profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Request Sent", "success"); } catch(e) { window.showNotification(e.message, "error"); } };
 
-// 🔥 NEW: ADD PRODUCT WITH CONVERSION
+// 🔥 NEW: ADD PRODUCT WITH CATEGORIES & CONVERSION
 window.addProductModal = () => { 
     if(window.profile.role !== 'manager') return; 
     const opts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join(''); 
@@ -549,7 +475,15 @@ window.addProductModal = () => {
     <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
     <div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
     <div class="grid grid-cols-2 gap-4 mb-4">
-        <div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Food">Food</option><option value="Beverage">Beverage</option><option value="Supplies">Supplies</option></select></div>
+        <div class="input-group mb-0"><label class="input-label">Category</label>
+            <select id="pCat" class="input-field">
+                <option value="Beverage">Beverage (Vinywaji)</option>
+                <option value="Food">Food (Chakula)</option>
+                <option value="Stationery">Stationery</option>
+                <option value="Linen">Linen</option>
+                <option value="Construction">Construction</option>
+            </select>
+        </div>
         <div class="input-group mb-0"><label class="input-label">Unit (LPO)</label><select id="pUnit" class="input-field"><option value="Crate">Crate</option><option value="Carton">Carton</option><option value="Pcs">Pcs</option><option value="Kg">Kg</option></select></div>
     </div>
     <div class="input-group mb-4">
