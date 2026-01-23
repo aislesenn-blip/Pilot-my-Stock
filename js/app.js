@@ -1,5 +1,5 @@
 import { getSession, logout } from './auth.js';
-import { getInventory, createLocation, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
+import { getInventory, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
 // --- CONFIG ---
@@ -19,7 +19,12 @@ const ALL_UNITS = ['Crate', 'Carton', 'Dozen', 'Pcs', 'Kg', 'Ltr', 'Box', 'Bag',
 const ALL_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'];
 
 // --- UI UTILS ---
-window.closeModalOutside = (e) => { if (e.target.classList.contains('modal-backdrop')) e.target.style.display = 'none'; };
+window.closeModalOutside = (e) => { 
+    if (e.target.classList.contains('modal-backdrop')) {
+        e.target.style.display = 'none'; 
+    }
+};
+
 window.showNotification = (message, type = 'success') => {
     const container = document.getElementById('toast-container');
     const div = document.createElement('div');
@@ -28,6 +33,7 @@ window.showNotification = (message, type = 'success') => {
     container.appendChild(div);
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 500); }, 3000);
 };
+
 window.premiumConfirm = (title, desc, btnText, callback) => {
     document.getElementById('confirm-title').innerText = title;
     document.getElementById('confirm-desc').innerText = desc;
@@ -49,16 +55,25 @@ window.onload = async () => {
     if (!session) { window.location.href = 'index.html'; return; }
     try {
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        if (!prof) { await new Promise(r => setTimeout(r, 1000)); let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); prof = retry.data; }
         
-        // Setup Check
-        if (!prof || !prof.organization_id) { 
-            document.getElementById('name-modal').style.display = 'flex';
-            if(session.user.user_metadata?.full_name) document.getElementById('userNameInput').value = session.user.user_metadata.full_name;
-            return; 
+        // Retry logic for newly created users
+        if (!prof) { 
+            await new Promise(r => setTimeout(r, 1000)); 
+            let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); 
+            prof = retry.data; 
         }
         
-        if (prof.status === 'suspended') { await logout(); alert("Account Suspended."); return; }
+        // Setup Check: If no Organization, Show Modal and STOP here.
+        if (!prof || !prof.organization_id) { 
+            document.getElementById('name-modal').style.display = 'flex';
+            if(session.user.user_metadata?.full_name) {
+                document.getElementById('userNameInput').value = session.user.user_metadata.full_name;
+            }
+            return; // 🛑 STOP EXECUTION HERE UNTIL SETUP DONE
+        }
+
+        if (prof.status === 'suspended') { await logout(); alert("Account Suspended. Contact Financial Controller."); return; }
+        
         window.profile = prof;
         
         // Load Core Data
@@ -66,12 +81,15 @@ window.onload = async () => {
             supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
             supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
         ]);
+        
         window.cachedLocations = locsRes.data || [];
         window.cachedSuppliers = supsRes.data || [];
+        
         await window.initCurrency();
         
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
+        
         if (role === 'finance' || role === 'deputy_finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
         else if (role === 'financial_controller') hide(['nav-bar', 'nav-settings']); 
         else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
@@ -109,7 +127,9 @@ window.saveName = async () => {
     if (!orgName) return window.showNotification("Company Name Required", "error");
     if (!name) return window.showNotification("Full Name Required", "error");
 
-    // 🔥 FIX: Parameters match SQL Function (p_org_name, p_full_name, p_phone) OR implied order
+    console.log("Attempting RPC Setup with:", { org_name: orgName, user_name: name, user_phone: phone });
+
+    // 🔥 FIX: Parameters match SQL Function (org_name, user_name, user_phone)
     const { data, error } = await supabase.rpc('create_new_organization', {
         org_name: orgName,
         user_name: name,
@@ -123,7 +143,9 @@ window.saveName = async () => {
 
     document.getElementById('name-modal').style.display = 'none';
     window.showNotification("Workspace Created Successfully", "success");
-    location.reload(); 
+    
+    // Refresh page to load new profile data
+    setTimeout(() => location.reload(), 1000); 
 };
 
 window.initCurrency = async () => { if (!window.profile) return; try { const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single(); window.baseCurrency = org?.base_currency || 'TZS'; const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id); window.currencyRates = {}; window.currencyRates[window.baseCurrency] = 1; (rates||[]).forEach(r => window.currencyRates[r.currency_code] = Number(r.rate)); } catch(e){} };
@@ -240,10 +262,12 @@ window.addProductModal = () => {
 };
 
 window.nextProductStep = async () => {
+    // Validate Step 1
     const name = document.getElementById('pN').value.toUpperCase();
     const cost = parseFloat(document.getElementById('pC').value);
     if(!name || isNaN(cost)) return window.showNotification("Invalid Input", "error");
 
+    // Save temp data
     window.tempProductData = {
         name, 
         category: document.getElementById('pCat').value,
@@ -254,6 +278,7 @@ window.nextProductStep = async () => {
         selling: parseFloat(document.getElementById('pS').value)
     };
 
+    // Load Locations for Pricing
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department'); // Only selling points
     const list = document.getElementById('price-list');
     
@@ -278,6 +303,7 @@ window.finalizeProduct = async () => {
     const costBase = window.convertAmount(d.cost, d.currency, window.baseCurrency);
     const sellingBase = window.convertAmount(d.selling, d.currency, window.baseCurrency);
 
+    // 1. Insert Product
     const { data: prod, error } = await supabase.from('products').insert({
         name: d.name, category: d.category, unit: d.unit, 
         conversion_factor: d.conversion_factor, cost_price: costBase, 
@@ -286,6 +312,7 @@ window.finalizeProduct = async () => {
 
     if(error) return window.showNotification(error.message, "error");
 
+    // 2. Insert Location Prices
     const priceInputs = document.querySelectorAll('.loc-price-input');
     const prices = [];
     priceInputs.forEach(i => {
