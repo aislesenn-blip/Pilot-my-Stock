@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pilot my Stock | Enterprise Access</title>
+    <title>ugaviSmarT | Enterprise Access</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -20,8 +20,8 @@
 
     <div class="glass w-full max-w-[420px] p-10 rounded-3xl animate-fade-in">
         <div class="mb-8">
-            <h1 class="text-2xl font-bold tracking-tight text-gray-900">Pilot my Stock.</h1>
-            <p class="text-xs text-gray-500 mt-2 font-medium tracking-wide">ENTERPRISE OPERATING SYSTEM</p>
+            <h1 class="text-2xl font-bold tracking-tight text-gray-900">ugaviSmarT.</h1>
+            <p class="text-xs text-gray-500 mt-2 font-medium tracking-wide">ENTERPRISE ERP SYSTEM</p>
         </div>
 
         <div class="flex p-1 bg-gray-100 rounded-xl mb-8">
@@ -83,7 +83,7 @@
             }
         };
 
-        // --- SMART LOGIN LOGIC (MASTER FIX) ---
+        // --- SMART LOGIN LOGIC ---
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const btn = e.target.querySelector('button');
@@ -102,10 +102,10 @@
                     const { data: invite } = await supabase.from('staff_invites').select('*').ilike('email', email).maybeSingle();
 
                     if (invite) {
-                        // 3. User is Invited -> Register them automatically with the password they just typed
+                        // 3. User is Invited -> Register them automatically
                         const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({ 
                             email, 
-                            password: pass // User sets their password here
+                            password: pass 
                         });
                         
                         if (signUpErr) throw signUpErr;
@@ -121,7 +121,6 @@
                 }
 
                 // 4. Link Invite to Profile & Redirect
-                // (Trigger will handle profile creation, we just link the invite)
                 await supabase.rpc('claim_my_invite', { email_to_check: email, user_id_to_link: data.user.id });
                 
                 // Check if they need Setup (First Time) or Dashboard
@@ -160,4 +159,3 @@
     </script>
 </body>
 </html>
-
