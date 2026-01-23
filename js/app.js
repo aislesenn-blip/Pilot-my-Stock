@@ -305,15 +305,43 @@ window.execCreatePO = async function() {
     window.router('inventory'); 
 };
 
+// ============================================================================
+// 🔥🔥 BUTTON FIX (OPEN RECEIVE MODAL WITH ERROR HANDLING) 🔥🔥
+// ============================================================================
 window.openReceiveModal = async function(poId) {
-    const { data: items } = await supabase.from('po_items').select('*, products(name)').eq('po_id', poId);
+    console.log("Opening LPO:", poId);
+    
+    // 1. Fetch Items with Error Handling
+    const { data: items, error } = await supabase
+        .from('po_items')
+        .select('*, products(name)')
+        .eq('po_id', poId);
+
+    // 2. Check for Database Errors
+    if (error) {
+        console.error("LPO Fetch Error:", error);
+        return window.showNotification("System Error: " + error.message, "error");
+    }
+
+    // 3. Check for Empty LPO (Prevent Crash)
+    if (!items || items.length === 0) {
+        return window.showNotification("Hii LPO haina bidhaa (Empty).", "error");
+    }
+
+    // 4. Build Modal Logic (Safe Map)
     const itemRows = items.map(i => {
         const rem = i.quantity - (i.received_qty || 0);
         if(rem <= 0) return '';
-        return `<div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded border"><div class="w-1/2"><span class="block text-xs font-bold uppercase">${i.products?.name}</span><span class="text-[10px] text-slate-500">Ord: ${i.quantity} | Rec: ${i.received_qty}</span></div><div class="w-1/2 flex justify-end gap-2"><span class="text-[10px] font-bold mt-2">Now:</span><input type="number" class="rec-inp w-20 input-field text-center text-blue-600 font-bold" data-id="${i.id}" data-pid="${i.product_id}" data-cost="${i.unit_cost}" max="${rem}" placeholder="${rem}"></div></div>`;
+        return `<div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded border"><div class="w-1/2"><span class="block text-xs font-bold uppercase">${i.products?.name || 'Unknown Item'}</span><span class="text-[10px] text-slate-500">Ord: ${i.quantity} | Rec: ${i.received_qty}</span></div><div class="w-1/2 flex justify-end gap-2"><span class="text-[10px] font-bold mt-2">Now:</span><input type="number" class="rec-inp w-20 input-field text-center text-blue-600 font-bold" data-id="${i.id}" data-pid="${i.product_id}" data-cost="${i.unit_cost}" max="${rem}" placeholder="${rem}"></div></div>`;
     }).join('');
+
     if(!itemRows) return window.showNotification("Fully Received", "success");
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 text-center">Receive Stock (GRN)</h3><p class="text-xs text-center text-slate-400 mb-6">PO: ${poId.split('-')[0]}</p><div class="mb-6 max-h-[300px] overflow-y-auto">${itemRows}</div><button onclick="window.execReceivePO('${poId}')" class="btn-primary w-full bg-blue-600">CONFIRM RECEIPT</button>`;
+
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-4 text-center">Receive Stock (GRN)</h3>
+        <p class="text-xs text-center text-slate-400 mb-6">PO: ${poId.split('-')[0]}</p>
+        <div class="mb-6 max-h-[300px] overflow-y-auto">${itemRows}</div>
+        <button onclick="window.execReceivePO('${poId}')" class="btn-primary w-full bg-blue-600">CONFIRM RECEIPT</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
