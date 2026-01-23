@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MauzoPro | Enterprise OS</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #F8FAFC; color: #0F172A; }
         .nav-active { background-color: #0F172A !important; color: #FFFFFF !important; border-left: 4px solid #3B82F6; }
@@ -27,8 +27,7 @@
         .btn-primary { background: #0F172A; color: #fff; padding: 14px; border-radius: 12px; font-weight: 600; width: 100%; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; transition: 0.2s; }
         .btn-primary:hover { background: #1E293B; transform: translateY(-1px); }
         
-        /* Currency Select */
-        .currency-select { background: transparent; font-weight: 700; font-size: 12px; outline: none; cursor: pointer; color: #0F172A; }
+        .tab-active { border-bottom: 2px solid #0F172A; color: #0F172A; }
     </style>
 </head>
 
@@ -38,7 +37,7 @@
 
     <aside id="sidebar" class="fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-gray-200 flex flex-col transform -translate-x-full md:translate-x-0 transition-transform duration-300 shadow-xl md:shadow-none">
         <div class="h-24 flex items-center justify-between px-8 border-b border-gray-50">
-            <span class="font-bold text-xl tracking-tight text-slate-900">MAUZOPRO.</span>
+            <span class="font-extrabold text-2xl tracking-tighter text-slate-900">MauzoPro.</span>
             <button id="close-sidebar" class="md:hidden text-slate-400 hover:text-red-600 p-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
         <nav class="flex-1 px-4 space-y-1 overflow-y-auto py-6" id="menu">
@@ -47,14 +46,14 @@
             <button onclick="window.router('approvals')" id="nav-approvals" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Approvals</button>
             <button onclick="window.router('reports')" id="nav-reports" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Reports</button>
             <button onclick="window.router('staff')" id="nav-staff" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg> Team</button>
-            <button onclick="window.router('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> Settings</button>
+            <button onclick="window.router('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-medium text-sm"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> Settings</button>
         </nav>
         <div class="p-8 border-t border-gray-100"><button onclick="window.logoutAction()" class="w-full text-xs font-bold text-slate-400 hover:text-red-600 uppercase tracking-widest transition flex items-center justify-center gap-2">Sign Out</button></div>
     </aside>
 
     <main class="flex-1 flex flex-col h-screen overflow-hidden relative bg-[#F8FAFC] md:ml-72 transition-all duration-300">
         <div class="md:hidden h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 z-10 shrink-0 shadow-sm">
-            <span class="font-bold text-lg uppercase tracking-tight text-slate-900">MAUZOPRO.</span>
+            <span class="font-extrabold text-lg uppercase tracking-tight text-slate-900">MauzoPro.</span>
             <button id="mobile-menu-btn" class="p-2 text-slate-600 rounded-lg hover:bg-slate-100"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg></button>
         </div>
         <div id="app-view" class="flex-1 overflow-y-auto p-6 md:p-12 pb-32 w-full max-w-7xl mx-auto"></div>
@@ -114,21 +113,34 @@
     </div>
 
     <div id="profile-viewer" class="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[10000] flex items-center justify-center p-4" onclick="document.getElementById('profile-viewer').style.display='none'">
-        <div class="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl animate-pop" onclick="event.stopPropagation()">
-            <div class="bg-slate-900 h-24 relative">
-                <div class="absolute -bottom-10 left-1/2 transform -translate-x-1/2 w-20 h-20 bg-white rounded-full p-1 shadow-lg">
-                    <div class="w-full h-full bg-slate-100 rounded-full flex items-center justify-center text-2xl font-bold text-slate-400 uppercase" id="pv-initials">U</div>
+        <div class="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl animate-pop h-[500px] flex flex-col" onclick="event.stopPropagation()">
+            <div class="bg-slate-900 p-6 flex items-center gap-4 shrink-0">
+                <div class="w-14 h-14 bg-white rounded-full flex items-center justify-center text-xl font-bold text-slate-900 uppercase" id="pv-initials">U</div>
+                <div class="flex-1">
+                    <h2 id="pv-name" class="text-lg font-bold text-white leading-tight">User Name</h2>
+                    <span id="pv-role" class="text-[10px] font-bold text-blue-200 uppercase tracking-widest">Role</span>
+                </div>
+                <div id="pv-status" class="px-2 py-1 bg-white/10 rounded text-[9px] font-bold text-white uppercase">Active</div>
+            </div>
+            
+            <div class="flex border-b border-slate-100 shrink-0">
+                <button onclick="window.switchProfileTab('details')" id="tab-details" class="flex-1 py-3 text-xs font-bold uppercase text-slate-400 hover:text-slate-900 transition tab-active">Details</button>
+                <button onclick="window.switchProfileTab('activity')" id="tab-activity" class="flex-1 py-3 text-xs font-bold uppercase text-slate-400 hover:text-slate-900 transition">History Log</button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-6 relative">
+                <div id="view-details" class="space-y-4">
+                    <div class="p-4 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Email Address</p><p id="pv-email" class="text-sm font-bold text-slate-800">user@email.com</p></div>
+                    <div class="p-4 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Phone Number</p><p id="pv-phone" class="text-sm font-bold text-slate-800">Not Provided</p></div>
+                    <div class="p-4 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Joined On</p><p id="pv-joined" class="text-sm font-bold text-slate-800">-</p></div>
+                </div>
+                <div id="view-activity" class="space-y-3 hidden">
+                    <div id="activity-list" class="text-xs text-slate-500">Loading history...</div>
                 </div>
             </div>
-            <div class="pt-12 pb-8 px-8 text-center">
-                <h2 id="pv-name" class="text-xl font-bold text-slate-900">User Name</h2>
-                <span id="pv-role" class="px-3 py-1 bg-blue-50 text-blue-600 text-[10px] font-bold uppercase rounded-full mt-2 inline-block">Role</span>
-                <span id="pv-status" class="block mt-2 text-[10px] font-bold uppercase"></span>
-                <div class="mt-6 text-left space-y-3">
-                    <div class="p-3 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Email</p><p id="pv-email" class="text-sm font-bold text-slate-800">user@email.com</p></div>
-                    <div class="p-3 bg-slate-50 rounded-xl"><p class="text-[10px] text-slate-400 uppercase font-bold">Phone</p><p id="pv-phone" class="text-sm font-bold text-slate-800">Not Provided</p></div>
-                </div>
-                <button onclick="document.getElementById('profile-viewer').style.display='none'" class="mt-6 w-full py-3 text-xs font-bold uppercase text-slate-400 hover:text-slate-900">Close</button>
+
+            <div class="p-4 border-t border-slate-100 shrink-0">
+                <button onclick="document.getElementById('profile-viewer').style.display='none'" class="w-full py-3 text-xs font-bold uppercase bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-200">Close Panel</button>
             </div>
         </div>
     </div>
