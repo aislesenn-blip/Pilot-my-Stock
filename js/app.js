@@ -128,7 +128,7 @@ window.saveName = async () => {
     if (!orgName) return window.showNotification("Company Name Required", "error");
     if (!name) return window.showNotification("Full Name Required", "error");
 
-    // 🔥 FIX: USING RPC TO BYPASS RLS
+    // 🔥 FIX: Parameters match SQL Function (org_name, user_name, user_phone)
     const { data, error } = await supabase.rpc('create_new_organization', {
         org_name: orgName,
         user_name: name,
