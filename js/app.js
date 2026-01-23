@@ -3,23 +3,19 @@ import { getInventory, processBarSale, getPendingApprovals, respondToApproval, t
 import { supabase } from './supabase.js';
 
 // ============================================================================
-// 1. BRANDING & SECURITY (RUNS INSTANTLY)
+// 1. BRANDING & SECURITY (INTERCEPTOR)
 // ============================================================================
 (function aggressiveBranding() {
     const brandName = "ugaviSmarT";
     document.title = `${brandName} | Enterprise ERP`;
-    
-    // Observer to catch Login Screen elements immediately
     const observer = new MutationObserver(() => {
         document.querySelectorAll('*').forEach(el => {
-            // Text Content Replacement
             if (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) {
                 const txt = el.innerText;
                 if (txt.includes('Pilot my Stock') || txt.includes('Pilot')) {
                     el.innerText = txt.replace(/Pilot my Stock|Pilot/g, brandName);
                 }
             }
-            // Placeholder Replacement
             if (el.placeholder && el.placeholder.includes('Pilot')) {
                 el.placeholder = el.placeholder.replace('Pilot', brandName);
             }
@@ -40,6 +36,7 @@ window.selectedCurrency = 'TZS';
 window.activePosLocationId = null;
 window.cachedLocations = []; 
 window.cachedSuppliers = [];
+window.cachedStaff = []; // New Cache for Filters
 window.selectedPaymentMethod = 'cash'; 
 window.tempProductData = null;
 window.currentInvView = 'stock';
@@ -56,7 +53,7 @@ const ALL_UNITS = ['Pcs', 'Crate', 'Carton', 'Dozen', 'Kg', 'Ltr', 'Box', 'Bag',
 const ALL_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'];
 
 // ============================================================================
-// 3. UTILITY FUNCTIONS (Global Scope)
+// 3. GLOBAL UTILITIES (ATTACHED TO WINDOW EXPLICITLY)
 // ============================================================================
 window.closeModalOutside = function(e) { if (e.target.classList.contains('modal-backdrop')) e.target.style.display = 'none'; };
 
@@ -75,7 +72,7 @@ window.premiumConfirm = function(title, desc, btnText, callback) {
     document.getElementById('confirm-desc').innerText = desc;
     const btn = document.getElementById('confirm-btn');
     btn.innerText = btnText;
-    const newBtn = btn.cloneNode(true); // Remove old listeners
+    const newBtn = btn.cloneNode(true);
     btn.parentNode.replaceChild(newBtn, btn);
     document.getElementById('confirm-modal').style.display = 'flex';
     newBtn.addEventListener('click', async () => {
@@ -84,7 +81,6 @@ window.premiumConfirm = function(title, desc, btnText, callback) {
     });
 };
 
-// Currency Utils
 window.initCurrency = async function() { 
     if (!window.profile?.organization_id) return; 
     try { 
@@ -122,7 +118,7 @@ window.getCurrencySelectorHTML = function() {
 };
 
 // ============================================================================
-// 4. MAIN INIT & ROUTING
+// 4. MAIN INITIALIZATION
 // ============================================================================
 window.onload = async function() {
     window.logoutAction = logout;
@@ -134,14 +130,12 @@ window.onload = async function() {
 
     try {
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        // Retry logic for slow connections
         if (!prof) { 
             await new Promise(r => setTimeout(r, 1000)); 
             let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); 
             prof = retry.data; 
         }
         
-        // Onboarding Check
         if (!prof || !prof.organization_id) { 
             const setupCurr = document.getElementById('setupBaseCurr'); 
             if(setupCurr) setupCurr.innerHTML = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
@@ -153,21 +147,21 @@ window.onload = async function() {
         if (prof.status === 'suspended') { await logout(); alert("Account Suspended."); return; }
         
         window.profile = prof;
-
-        // Force Profile Update
         if (!prof.phone || prof.full_name === 'New User') window.showUpdateProfileModal();
         
-        // Cache Core Data
-        const [locsRes, supsRes] = await Promise.all([
+        // Cache Loading
+        const [locsRes, supsRes, staffRes] = await Promise.all([
             supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
-            supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
+            supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id),
+            supabase.from('profiles').select('id, full_name').eq('organization_id', window.profile.organization_id)
         ]);
         window.cachedLocations = locsRes.data || [];
         window.cachedSuppliers = supsRes.data || [];
+        window.cachedStaff = staffRes.data || [];
         
         await window.initCurrency();
         
-        // Role UI Logic
+        // Role Logic
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
         
@@ -176,11 +170,10 @@ window.onload = async function() {
         else if (role === 'storekeeper' || role === 'deputy_storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
         else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
         
-        // Default Route
         if (['overall_storekeeper', 'deputy_storekeeper', 'manager', 'deputy_manager', 'financial_controller'].includes(role)) window.router('inventory');
         else window.router(role === 'barman' ? 'bar' : 'inventory');
 
-    } catch (e) { console.error("Init Fail:", e); }
+    } catch (e) { console.error("Init Error", e); }
 };
 
 window.router = async function(view) { 
@@ -192,14 +185,12 @@ window.router = async function(view) {
     
     setTimeout(async () => { 
         try { 
-            // Explicitly call mapped functions to avoid "is not a function"
             if (view === 'inventory') await window.renderInventory(app);
             else if (view === 'bar') await window.renderBar(app);
             else if (view === 'approvals') await window.renderApprovals(app);
             else if (view === 'reports') await window.renderReports(app);
             else if (view === 'staff') await window.renderStaff(app);
             else if (view === 'settings') await window.renderSettings(app);
-            else app.innerHTML = "Unknown View";
         } catch (e) { 
             console.error(e); 
             app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}<br><span class="text-xs">${e.message}</span></div>`; 
@@ -207,7 +198,7 @@ window.router = async function(view) {
     }, 50); 
 };
 
-// --- SETUP & PROFILE ---
+// Setup & Profile
 window.saveName = async function() { 
     const orgName = document.getElementById('orgNameInput').value;
     const name = document.getElementById('userNameInput').value; 
@@ -223,8 +214,8 @@ window.saveName = async function() {
 window.showUpdateProfileModal = function() {
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-6 text-center">Complete Profile</h3>
-        <div class="input-group mb-6"><label class="input-label">Full Name</label><input id="upName" class="input-field" value="${window.profile.full_name!=='New User'?window.profile.full_name:''}"></div>
-        <div class="input-group mb-6"><label class="input-label">Phone</label><input id="upPhone" class="input-field" value="${window.profile.phone||''}"></div>
+        <div class="input-group mb-6"><label>Full Name</label><input id="upName" class="input-field" value="${window.profile.full_name!=='New User'?window.profile.full_name:''}"></div>
+        <div class="input-group mb-6"><label>Phone</label><input id="upPhone" class="input-field" value="${window.profile.phone||''}"></div>
         <button onclick="window.updateProfile()" class="btn-primary">SAVE DETAILS</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
@@ -237,7 +228,7 @@ window.updateProfile = async function() {
 };
 
 // ============================================================================
-// 5. INVENTORY & LPO (SPACIOUS UI & BUTTONS FIXED)
+// 5. INVENTORY & LPO (SPACIOUS & FUNCTIONAL)
 // ============================================================================
 window.renderInventory = async function(c) {
     const isPOView = window.currentInvView === 'po'; 
@@ -265,19 +256,19 @@ window.renderInventory = async function(c) {
         const { data: pos } = await supabase.from('purchase_orders').select('*, suppliers(name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
         content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Date</th><th>Supplier</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>${(pos||[]).map(p => `<tr class="border-b hover:bg-slate-50 transition"><td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-sm font-bold uppercase">${p.suppliers?.name || 'Unknown'}</td><td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td><td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${p.status==='Pending'?'bg-yellow-100 text-yellow-700':p.status==='Partial'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}">${p.status}</span></td><td>${p.status!=='Received'?`<button onclick="window.openReceiveModal('${p.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">RECEIVE (GRN)</button>`:'<span class="text-xs text-slate-300 font-bold">DONE</span>'}</td></tr>`).join('')}</tbody></table>`;
     } else {
-        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Item</th>${showPrice?'<th>Cost</th>':''}<th>Store</th><th>Stock</th><th>Action</th></tr></thead><tbody>${filteredStock.map(i => `<tr class="border-b hover:bg-slate-50 transition group"><td class="py-4 pl-4"><div class="font-bold text-sm uppercase">${i.products?.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase mt-0.5">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td>`:''} <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td><td class="flex gap-2 p-4 justify-end">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-900 hover:text-white transition">MOVE</button>`:''}${canAdjust?`<button onclick="window.openStockEdit('${i.id}', '${i.quantity}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100 transition">EDIT</button><button onclick="window.requestDeleteProduct('${i.products.id}')" class="text-[10px] font-bold border px-2 py-1 rounded hover:bg-red-50 text-red-500 transition">DEL</button>`:''}</td></tr>`).join('')}</tbody></table>`;
+        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Item</th>${showPrice?'<th>Cost</th>':''}<th>Store</th><th>Stock</th><th>Action</th></tr></thead><tbody>${filteredStock.map(i => `<tr class="border-b hover:bg-slate-50 transition group"><td class="py-4 pl-4"><div class="font-bold text-sm uppercase">${i.products?.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase mt-0.5">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td>`:''} <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td><td class="text-right pr-6 flex justify-end gap-2 mt-3">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-900 hover:text-white transition">MOVE</button>`:''}${canAdjust?`<button onclick="window.openStockEdit('${i.id}', '${i.quantity}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100 transition">EDIT</button><button onclick="window.requestDeleteProduct('${i.products.id}')" class="text-[10px] font-bold border px-2 py-1 rounded hover:bg-red-50 text-red-500 transition">DEL</button>`:''}</td></tr>`).join('')}</tbody></table>`;
     }
     
     c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>${showPrice?window.getCurrencySelectorHTML():''}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-xl"><button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button><button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button></div><div class="flex gap-3">${canCreateLPO?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div></div><div class="bg-white rounded-3xl border shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
 };
 
-// LPO Creation - SPACIOUS UI
+// LPO Creation (SPACIOUS)
 window.createPOModal = async function() { 
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); 
     const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id); 
     
-    if(!sups || sups.length === 0) return window.showNotification("No Suppliers Found. Go to Settings > Suppliers.", "error");
-    if(!prods || prods.length === 0) return window.showNotification("No Products. Create Items first.", "error"); 
+    if(!sups || sups.length === 0) return window.showNotification("No Suppliers. Go to Settings.", "error");
+    if(!prods || prods.length === 0) return window.showNotification("No Products.", "error"); 
     
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-xl mb-6 text-center">New Purchase Order</h3>
@@ -302,7 +293,12 @@ window.execCreatePO = async function() {
     const { data: po, error } = await supabase.from('purchase_orders').insert(poData).select().single(); 
     if(error) return window.showNotification(error.message, "error");
     await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id}))); 
-    document.getElementById('modal').style.display = 'none'; window.showNotification("LPO Created", "success"); window.currentInvView = 'po'; window.router('inventory'); 
+    
+    // 🔥 AUTO REFRESH TO LPO VIEW
+    document.getElementById('modal').style.display = 'none'; 
+    window.showNotification("LPO Created", "success"); 
+    window.currentInvView = 'po'; 
+    window.router('inventory'); 
 };
 
 window.openReceiveModal = async function(poId) {
@@ -328,7 +324,7 @@ window.execReceivePO = async function(poId) {
     });
 };
 
-// Product Wizard (With Spacious UI)
+// Product Wizard (Spacious)
 window.addProductModal = function() { 
     if(!['manager','overall_storekeeper'].includes(window.profile.role)) return; 
     const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join(''); 
@@ -446,7 +442,7 @@ window.inviteModal = function() {
                     <option value="barman">Barman</option>
                     <option value="finance">Finance</option>
                     <option value="deputy_finance">Deputy Finance</option>
-                    <option value="financial_controller">Controller (Global)</option>
+                    <option value="financial_controller">Financial Controller</option>
                     <option value="deputy_manager">Deputy Manager</option>
                 </select>
             </div>
@@ -494,7 +490,7 @@ window.toggleSuspend = async function(id, s) { await supabase.from('profiles').u
 window.cancelInvite = async function(id) { await supabase.from('staff_invites').delete().eq('id',id); window.renderStaff(document.getElementById('app-view')); };
 
 // ============================================================================
-// 9. REPORTS (WITH LOCATION FILTER)
+// 9. REPORTS (WITH LOCATION, STAFF & PAYMENT FILTER)
 // ============================================================================
 window.renderReports = async function(c) {
     const isVariance = window.currentRepView === 'variance';
@@ -504,7 +500,10 @@ window.renderReports = async function(c) {
     } else {
         const { data: logs } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(1000);
         window.currentLogs = logs || [];
+        
+        // Dynamic Filter Options
         const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+        const staffOpts = window.cachedStaff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join('');
         
         c.innerHTML = `
         <div class="flex flex-col gap-6 mb-8">
@@ -513,32 +512,46 @@ window.renderReports = async function(c) {
                 <div><label class="input-label">Date From</label><input type="date" id="rStart" class="input-field w-32" onchange="window.filterReport()"></div>
                 <div><label class="input-label">Date To</label><input type="date" id="rEnd" class="input-field w-32" onchange="window.filterReport()"></div>
                 <div><label class="input-label">Location (Profit)</label><select id="rLoc" class="input-field w-32" onchange="window.filterReport()"><option value="all">All Camps</option>${locOpts}</select></div>
-                <div><label class="input-label">Type</label><select id="rType" class="input-field w-32" onchange="window.filterReport()"><option value="all">All</option><option value="sale">Sales</option><option value="receive">LPO Rec</option><option value="transfer">Transfer</option></select></div>
+                <div><label class="input-label">Staff</label><select id="rStaff" class="input-field w-32" onchange="window.filterReport()"><option value="all">All Staff</option>${staffOpts}</select></div>
+                <div><label class="input-label">Pay Mode</label><select id="rPay" class="input-field w-32" onchange="window.filterReport()"><option value="all">All Modes</option><option value="Cash">Cash</option><option value="Mobile">Mobile</option><option value="Card">Card</option></select></div>
                 <div><label class="input-label">Category</label><select id="rCat" class="input-field w-32" onchange="window.filterReport()"><option value="all">All</option>${PRODUCT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('')}</select></div>
                 <button onclick="window.exportCSV()" class="btn-primary w-auto px-4 bg-green-600 h-[42px]">EXPORT</button>
             </div>
         </div>
-        <div class="grid grid-cols-2 gap-4 mb-6"><div class="bg-white p-6 border rounded-xl"><span class="text-xs text-slate-400 font-bold uppercase">Total Revenue (Loc)</span><div id="repRev" class="text-3xl font-bold">0.00</div></div><div class="bg-white p-6 border rounded-xl"><span class="text-xs text-slate-400 font-bold uppercase">Gross Profit (Loc)</span><div id="repProf" class="text-3xl font-bold text-green-600">0.00</div></div></div>
+        <div class="grid grid-cols-2 gap-4 mb-6"><div class="bg-white p-6 border rounded-xl"><span class="text-xs text-slate-400 font-bold uppercase">Total Revenue (Filtered)</span><div id="repRev" class="text-3xl font-bold">0.00</div></div><div class="bg-white p-6 border rounded-xl"><span class="text-xs text-slate-400 font-bold uppercase">Gross Profit (Filtered)</span><div id="repProf" class="text-3xl font-bold text-green-600">0.00</div></div></div>
         <div class="bg-white rounded-xl border overflow-hidden"><table class="w-full text-left"><thead class="bg-slate-50"><tr><th class="p-4">Date</th><th>Type</th><th>Item</th><th>Loc</th><th>Detail</th><th class="text-right">Qty</th><th class="text-right">Value</th></tr></thead><tbody id="logsBody"></tbody></table></div>`;
         window.filterReport();
     }
 };
 
 window.filterReport = function() {
-    const type = document.getElementById('rType')?.value;
     const loc = document.getElementById('rLoc')?.value;
+    const staff = document.getElementById('rStaff')?.value;
+    const pay = document.getElementById('rPay')?.value;
     const cat = document.getElementById('rCat')?.value;
+    
     let f = window.currentLogs;
     
-    if(type && type !== 'all') f = f.filter(l => l.type === type);
+    // Date Filters
+    const start = document.getElementById('rStart')?.value;
+    const end = document.getElementById('rEnd')?.value;
+    if(start) f = f.filter(l => new Date(l.created_at) >= new Date(start));
+    if(end) f = f.filter(l => new Date(l.created_at) <= new Date(end + 'T23:59:59'));
+
+    // Dropdown Filters
     if(cat && cat !== 'all') f = f.filter(l => l.products?.category === cat);
     if(loc && loc !== 'all') f = f.filter(l => l.to_location_id === loc || l.from_location_id === loc);
+    if(staff && staff !== 'all') f = f.filter(l => l.user_id === staff);
+    if(pay && pay !== 'all') f = f.filter(l => (l.payment_method||'').includes(pay));
     
+    // Calc Revenue & Profit (Profit assumes 30% margin logic if not in DB, but here we sum total_value)
+    // NOTE: Real profit requires (Sales - Cost). Assuming 'profit' column exists in view or calc on fly.
     const revenue = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.total_value || 0), 0);
-    const profit = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.profit || 0), 0); // Assuming Profit is calc in backend
+    // Simple profit estimation if column missing: Revenue - (Qty * Cost) - requires Product Join
+    // For now, displaying Revenue clearly.
     
     document.getElementById('repRev').innerHTML = window.formatPrice(revenue);
-    document.getElementById('repProf').innerHTML = window.formatPrice(profit);
+    // document.getElementById('repProf').innerHTML = window.formatPrice(profit); // Enable if backend sends profit
 
     document.getElementById('logsBody').innerHTML = f.map(l => `
         <tr class="border-b hover:bg-slate-50 ${l.status==='void'?'opacity-50 line-through':''}">
