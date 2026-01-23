@@ -10,24 +10,16 @@ window.baseCurrency = 'TZS';
 window.currencyRates = {};
 window.selectedCurrency = 'TZS';
 window.activePosLocationId = null;
-window.cachedLocations = [];
+window.cachedLocations = []; // Muhimu kwa Location Pricing
 window.cachedSuppliers = [];
 window.selectedPaymentMethod = 'cash'; 
-window.tempProductData = null;
+window.tempProductData = null; // For multi-step product wizard
 
 const ALL_UNITS = ['Crate', 'Carton', 'Dozen', 'Pcs', 'Kg', 'Ltr', 'Box', 'Bag', 'Packet', 'Set', 'Roll', 'Tin', 'Bundle', 'Pallet', 'Mita', 'Galoni'];
-// Full Currency List
-const ALL_CURRENCIES = [
-    'TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR', 'OMR', 'KWD', 'BHD', 'NGN', 'GHS', 'ETB', 'ZMW', 'MWK', 'MZN'
-];
+const ALL_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'];
 
-// --- UI UTILITIES ---
-window.closeModalOutside = (e) => { 
-    if (e.target.classList.contains('modal-backdrop')) {
-        e.target.style.display = 'none'; 
-    }
-};
-
+// --- UI UTILS ---
+window.closeModalOutside = (e) => { if (e.target.classList.contains('modal-backdrop')) e.target.style.display = 'none'; };
 window.showNotification = (message, type = 'success') => {
     const container = document.getElementById('toast-container');
     const div = document.createElement('div');
@@ -36,7 +28,6 @@ window.showNotification = (message, type = 'success') => {
     container.appendChild(div);
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 500); }, 3000);
 };
-
 window.premiumConfirm = (title, desc, btnText, callback) => {
     document.getElementById('confirm-title').innerText = title;
     document.getElementById('confirm-desc').innerText = desc;
@@ -51,70 +42,51 @@ window.premiumConfirm = (title, desc, btnText, callback) => {
     });
 };
 
-// --- INITIALIZATION ---
+// --- INIT ---
 window.onload = async () => {
-    // 1. Force Premium Branding
-    document.title = "ugaviSmarT";
-    const brandEl = document.querySelector('.brand-logo'); // Assuming class exists or just rely on title
-    if(brandEl) brandEl.innerText = "ugaviSmarT";
-
+    // Force Branding
+    const brand = document.querySelector('.brand-logo');
+    if(brand) brand.innerText = 'ugaviSmarT';
+    
     window.logoutAction = logout;
     const session = await getSession();
     if (!session) { window.location.href = 'index.html'; return; }
-    
     try {
         let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        if (!prof) { await new Promise(r => setTimeout(r, 1000)); let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); prof = retry.data; }
         
-        // Retry logic for latency
-        if (!prof) { 
-            await new Promise(r => setTimeout(r, 1000)); 
-            let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); 
-            prof = retry.data; 
-        }
-        
-        // Setup Logic
+        // Setup Check
         if (!prof || !prof.organization_id) { 
-            // Load Currency Options for Setup Modal
-            const currSelect = document.getElementById('baseCurrencySetup'); // Add this ID to your HTML select if not present
-            if(currSelect) {
-                currSelect.innerHTML = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
-            }
+            // Populate Currency List in Setup Modal
+            const setupCurr = document.getElementById('setupBaseCurr'); 
+            if(setupCurr) setupCurr.innerHTML = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
             
             document.getElementById('name-modal').style.display = 'flex';
-            if(session.user.user_metadata?.full_name) {
-                document.getElementById('userNameInput').value = session.user.user_metadata.full_name;
-            }
+            if(session.user.user_metadata?.full_name) document.getElementById('userNameInput').value = session.user.user_metadata.full_name;
             return; 
         }
-
-        if (prof.status === 'suspended') { await logout(); alert("Account Suspended."); return; }
         
+        if (prof.status === 'suspended') { await logout(); alert("Account Suspended."); return; }
         window.profile = prof;
         
-        // Load Core Data
+        // Load Core Data (Locations & Suppliers)
         const [locsRes, supsRes] = await Promise.all([
             supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
             supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
         ]);
-        
         window.cachedLocations = locsRes.data || [];
         window.cachedSuppliers = supsRes.data || [];
-        
         await window.initCurrency();
         
-        // Role Based Navigation Hiding
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
-        
         if (role === 'finance' || role === 'deputy_finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
         else if (role === 'financial_controller') hide(['nav-bar', 'nav-settings']); 
         else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
         else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
         
-        // Router
         if (['overall_storekeeper', 'deputy_storekeeper', 'manager'].includes(role)) window.router('inventory');
         else window.router(role === 'barman' ? 'bar' : 'inventory');
-
     } catch (e) { console.error(e); }
 };
 
@@ -124,30 +96,26 @@ window.router = async (view) => {
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active')); 
     const navEl = document.getElementById(`nav-${view}`); 
     if(navEl) navEl.classList.add('nav-active'); 
-    
     setTimeout(async () => { 
         try { 
             if (view === 'inventory') await window.renderInventory(app); 
             else if (view === 'bar') await window.renderBar(app); 
             else if (view === 'approvals') await window.renderApprovals(app); 
             else if (view === 'reports') await window.renderReports(app); 
-            else if (view === 'staff') await window.renderStaff(app); // FIXED: Function now exists
+            else if (view === 'staff') await window.renderStaff(app); 
             else if (view === 'settings') await window.renderSettings(app); 
-        } catch (e) { 
-            console.error(e); 
-            app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`; 
-        } 
+        } catch (e) { console.error(e); app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`; } 
     }, 50); 
 };
 
-// --- CORE SETUP (RPC) ---
+// --- SETUP (RPC ONLY) ---
 window.saveName = async () => { 
     const orgName = document.getElementById('orgNameInput').value;
     const name = document.getElementById('userNameInput').value; 
     const phone = document.getElementById('userPhoneInput').value; 
-    
-    if (!orgName) return window.showNotification("Company Name Required", "error");
-    if (!name) return window.showNotification("Full Name Required", "error");
+    // const camps = ... (Future: Capture initial camps here if needed, but RPC needs update for that)
+
+    if (!orgName || !name) return window.showNotification("Fields Required", "error");
 
     const { data, error } = await supabase.rpc('create_setup_data', {
         p_org_name: orgName,
@@ -155,81 +123,100 @@ window.saveName = async () => {
         p_phone: phone
     });
 
-    if (error) {
-        console.error("RPC Error:", error);
-        return window.showNotification("Setup Failed: " + error.message, "error");
-    }
+    if (error) return window.showNotification(error.message, "error");
 
     document.getElementById('name-modal').style.display = 'none';
-    window.showNotification("Workspace Created Successfully!", "success");
+    window.showNotification("Karibu ugaviSmarT", "success");
     location.reload(); 
 };
 
-// --- CURRENCY LOGIC ---
+// --- CURRENCY ---
 window.initCurrency = async () => { if (!window.profile) return; try { const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single(); window.baseCurrency = org?.base_currency || 'TZS'; const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id); window.currencyRates = {}; window.currencyRates[window.baseCurrency] = 1; (rates||[]).forEach(r => window.currencyRates[r.currency_code] = Number(r.rate)); } catch(e){} };
 window.convertAmount = (amount, fromCurr, toCurr) => { if (!amount) return 0; const fromRate = window.currencyRates[fromCurr]; const toRate = window.currencyRates[toCurr]; if (!fromRate || !toRate) return null; return fromCurr === window.baseCurrency ? amount * toRate : amount / fromRate; };
 window.formatPrice = (amount) => { if (!amount && amount !== 0) return '-'; let converted = window.convertAmount(amount, window.baseCurrency, window.selectedCurrency); return converted === null ? 'SET RATE' : `${window.selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: 2})}`; };
 window.changeCurrency = (curr) => { window.selectedCurrency = curr; localStorage.setItem('user_pref_currency', curr); const activeEl = document.querySelector('.nav-item.nav-active'); if (activeEl) window.router(activeEl.id.replace('nav-', '')); };
 window.getCurrencySelectorHTML = () => { const options = ALL_CURRENCIES.map(c => `<option value="${c}" ${window.selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join(''); return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`; };
 
-// --- STAFF MODULE (THE FIX) ---
-window.renderStaff = async (c) => {
-    if(!['manager', 'financial_controller'].includes(window.profile.role)) {
-        return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Access Restricted</div>';
-    }
-
-    const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', window.profile.organization_id);
-    const { data: invites } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
-
-    c.innerHTML = `
-    <div class="flex justify-between items-center mb-8">
-        <h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Team Management</h1>
-        <button onclick="window.inviteModal()" class="btn-primary w-auto px-6 shadow-lg bg-slate-900 text-white">INVITE STAFF</button>
-    </div>
-
-    <div class="grid grid-cols-1 gap-8">
-        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="p-6 border-b border-slate-100"><h3 class="font-bold text-sm uppercase text-slate-500">Active Staff</h3></div>
-            <table class="w-full text-left">
-                <thead class="bg-slate-50 border-b border-slate-100">
-                    <tr><th class="p-4 text-xs uppercase text-slate-400">Name</th><th class="text-xs uppercase text-slate-400">Role</th><th class="text-xs uppercase text-slate-400">Status</th></tr>
-                </thead>
-                <tbody>
-                    ${staff.map(s => `
-                        <tr class="border-b last:border-0 hover:bg-slate-50 transition">
-                            <td class="p-4 font-bold text-slate-700">${s.full_name}</td>
-                            <td class="text-xs uppercase text-slate-500">${s.role.replace('_', ' ')}</td>
-                            <td><span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase ${s.status==='active'?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}">${s.status}</span></td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-
-        ${invites && invites.length > 0 ? `
-        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <div class="p-6 border-b border-slate-100"><h3 class="font-bold text-sm uppercase text-orange-500">Pending Invites</h3></div>
-            <table class="w-full text-left">
-                <tbody>
-                    ${invites.map(i => `
-                        <tr class="border-b last:border-0 hover:bg-slate-50">
-                            <td class="p-4 font-bold text-slate-700">${i.email}</td>
-                            <td class="text-xs uppercase text-slate-500">${i.role}</td>
-                            <td class="text-xs text-slate-400 italic">Waiting to join...</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>` : ''}
-    </div>`;
+// --- PRODUCT REGISTRATION (LOCATION PRICES RESTORED) ---
+window.addProductModal = () => { 
+    if(!['manager','overall_storekeeper'].includes(window.profile.role)) return; 
+    const opts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join(''); 
+    const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join(''); 
+    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3><div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-4 mb-4"><div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Beverage">Beverage</option><option value="Food">Food</option><option value="Stationery">Stationery</option><option value="Linen">Linen</option><option value="Construction">Construction</option></select></div><div class="input-group mb-0"><label class="input-label">Unit (LPO)</label><select id="pUnit" class="input-field">${unitOpts}</select></div></div><div class="input-group mb-4"><label class="input-label">Items per Unit</label><input id="pConv" type="number" class="input-field font-mono font-bold" value="1"></div><div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">${opts}</select></div><div class="grid grid-cols-2 gap-4 mb-6"><div class="input-group mb-0"><label class="input-label">Cost Price</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling Price (Base)</label><input id="pS" type="number" class="input-field"></div></div><button onclick="window.nextProductStep()" class="btn-primary">Next: Location Prices</button>`; 
+    document.getElementById('modal').style.display = 'flex'; 
 };
 
-// --- SETTINGS (BUTTONS FIXED) ---
-window.renderSettings = async (c) => {
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
-    const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id);
+window.nextProductStep = async () => {
+    const name = document.getElementById('pN').value.toUpperCase();
+    const cost = parseFloat(document.getElementById('pC').value);
+    if(!name || isNaN(cost)) return window.showNotification("Invalid Input", "error");
+
+    window.tempProductData = {
+        name, 
+        category: document.getElementById('pCat').value,
+        unit: document.getElementById('pUnit').value,
+        conversion_factor: document.getElementById('pConv').value,
+        currency: document.getElementById('pCurrency').value,
+        cost,
+        selling: parseFloat(document.getElementById('pS').value)
+    };
+
+    // 🔥 HAPA TUNALETA CAMPS ZOTE (RESTORED)
+    const list = document.getElementById('price-list'); // Make sure you have a generic modal logic or replace content
+    const locs = window.cachedLocations; // Use cached
     
-    // Currency Exchange UI
+    let locHtml = locs.map(l => `
+        <div class="flex justify-between items-center mb-2 p-2 bg-slate-50 rounded border">
+            <label class="text-xs font-bold w-1/2">${l.name}</label>
+            <input type="number" class="loc-price-input input-field w-1/2" data-loc="${l.id}" value="${window.tempProductData.selling}" placeholder="Price">
+        </div>
+    `).join('');
+
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-4 uppercase text-center">Set Prices per Camp</h3>
+        <div class="mb-4 max-h-60 overflow-y-auto">${locHtml}</div>
+        <button onclick="window.finalizeProduct()" class="btn-primary">SAVE PRODUCT</button>
+    `;
+};
+
+window.finalizeProduct = async () => {
+    const d = window.tempProductData;
+    const costBase = window.convertAmount(d.cost, d.currency, window.baseCurrency);
+    const sellingBase = window.convertAmount(d.selling, d.currency, window.baseCurrency);
+
+    // 1. Insert Product
+    const { data: prod, error } = await supabase.from('products').insert({
+        name: d.name, category: d.category, unit: d.unit, 
+        conversion_factor: d.conversion_factor, cost_price: costBase, 
+        selling_price: sellingBase, organization_id: window.profile.organization_id
+    }).select().single();
+
+    if(error) return window.showNotification(error.message, "error");
+
+    // 2. Insert Location Prices (RESTORED)
+    const priceInputs = document.querySelectorAll('.loc-price-input');
+    const prices = [];
+    priceInputs.forEach(i => {
+        if(i.value) prices.push({ organization_id: window.profile.organization_id, product_id: prod.id, location_id: i.dataset.loc, selling_price: window.convertAmount(parseFloat(i.value), d.currency, window.baseCurrency) });
+    });
+
+    if(prices.length > 0) await supabase.from('location_prices').insert(prices);
+
+    document.getElementById('modal').style.display = 'none';
+    window.showNotification("Product & Camp Prices Saved", "success");
+    window.router('inventory');
+};
+
+// --- SETTINGS (CAMPS & SUPPLIERS RESTORED) ---
+window.renderSettings = async (c) => {
+    // Refresh Cache
+    const [l, s] = await Promise.all([
+        supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
+        supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
+    ]);
+    window.cachedLocations = l.data;
+    window.cachedSuppliers = s.data;
+
     const rateRows = ALL_CURRENCIES.map(code => {
         const isBase = code === window.baseCurrency;
         const val = isBase ? 1 : (window.currencyRates[code] || '');
@@ -241,147 +228,98 @@ window.renderSettings = async (c) => {
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div class="space-y-8">
             <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-slate-800 transition">+ ADD</button></div>
-                <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type.replace('_', ' ')}</td></tr>`).join('')}</tbody></table>
+                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Camps & Stores</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ ADD</button></div>
+                <table class="w-full text-left"><tbody>${window.cachedLocations.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type.replace('_', ' ')}</td></tr>`).join('')}</tbody></table>
             </div>
             <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Suppliers</h3><button onclick="window.openSupplierModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold hover:bg-slate-800 transition">+ NEW</button></div>
-                <table class="w-full text-left"><tbody>${(sups||[]).map(s => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${s.name}</td><td class="text-xs text-slate-400 font-mono text-right">${s.tin || '-'}</td></tr>`).join('')}</tbody></table>
+                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Suppliers</h3><button onclick="window.openSupplierModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ NEW</button></div>
+                <table class="w-full text-left"><tbody>${window.cachedSuppliers.map(s => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${s.name}</td><td class="text-xs text-slate-400 font-mono text-right">${s.tin || '-'}</td></tr>`).join('')}</tbody></table>
             </div>
         </div>
         <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
             <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
-            <div class="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">${rateRows}</div>
+            <div class="max-h-[500px] overflow-y-auto pr-2">${rateRows}</div>
             <button onclick="window.saveRates()" class="btn-primary mt-6">UPDATE RATES</button>
         </div>
     </div>`;
 };
 
-// --- NEW MODAL FUNCTIONS (FIXED) ---
 window.addStoreModal = () => {
     document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-6 uppercase text-center">Add Location</h3>
-        <div class="input-group mb-4">
-            <label class="input-label">Location Name</label>
-            <input id="locName" class="input-field uppercase" placeholder="e.g. BAR COUNTER A">
-        </div>
-        <div class="input-group mb-6">
-            <label class="input-label">Type</label>
-            <select id="locType" class="input-field">
-                <option value="main_store">Main Store</option>
-                <option value="department">Department (Bar/Kitchen)</option>
-            </select>
-        </div>
-        <button onclick="window.execAddStore()" class="btn-primary">CREATE LOCATION</button>
-    `;
+        <h3 class="font-bold text-lg mb-6 uppercase text-center">New Location</h3>
+        <div class="input-group"><label class="input-label">Name</label><input id="locName" class="input-field uppercase"></div>
+        <div class="input-group"><label class="input-label">Type</label><select id="locType" class="input-field"><option value="sub_store">Sub Store / Camp</option><option value="department">POS Point (Bar/Kitchen)</option></select></div>
+        <button onclick="window.execAddStore()" class="btn-primary">CREATE</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
 window.execAddStore = async () => {
     const name = document.getElementById('locName').value;
-    const type = document.getElementById('locType').value;
-    if(!name) return window.showNotification("Name required", "error");
-
-    const { error } = await supabase.from('locations').insert({
-        organization_id: window.profile.organization_id,
-        name: name,
-        type: type,
-        // Parent will be null for now, simple hierarchy
-    });
-
-    if(error) window.showNotification(error.message, "error");
-    else {
-        window.showNotification("Location Added", "success");
-        document.getElementById('modal').style.display = 'none';
-        window.router('settings');
-    }
+    if(!name) return;
+    await supabase.from('locations').insert({ organization_id: window.profile.organization_id, name, type: document.getElementById('locType').value });
+    document.getElementById('modal').style.display = 'none';
+    window.showNotification("Location Created", "success");
+    window.router('settings');
 };
 
 window.openSupplierModal = () => {
+    // 🔥 RESTORED ADDRESS FIELDS
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-6 uppercase text-center">New Supplier</h3>
-        <div class="input-group mb-4">
-            <label class="input-label">Company Name</label>
-            <input id="supName" class="input-field uppercase">
-        </div>
-        <div class="input-group mb-4">
-            <label class="input-label">TIN Number</label>
-            <input id="supTin" class="input-field font-mono">
-        </div>
-        <div class="input-group mb-6">
-            <label class="input-label">Contact / Phone</label>
-            <input id="supContact" class="input-field">
-        </div>
-        <button onclick="window.execAddSupplier()" class="btn-primary">SAVE SUPPLIER</button>
-    `;
+        <div class="input-group"><label class="input-label">Name</label><input id="sN" class="input-field uppercase"></div>
+        <div class="input-group"><label class="input-label">TIN</label><input id="sT" class="input-field"></div>
+        <div class="input-group"><label class="input-label">Phone</label><input id="sP" class="input-field"></div>
+        <div class="input-group"><label class="input-label">Address / Location</label><input id="sA" class="input-field"></div>
+        <button onclick="window.execAddSupplier()" class="btn-primary">SAVE</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
 window.execAddSupplier = async () => {
-    const name = document.getElementById('supName').value;
-    const tin = document.getElementById('supTin').value;
-    const contact = document.getElementById('supContact').value;
-    
+    const name = document.getElementById('sN').value;
     if(!name) return;
-
-    const { error } = await supabase.from('suppliers').insert({
-        organization_id: window.profile.organization_id,
-        name, tin, contact
+    await supabase.from('suppliers').insert({ 
+        organization_id: window.profile.organization_id, 
+        name, 
+        tin: document.getElementById('sT').value, 
+        contact: document.getElementById('sP').value,
+        address: document.getElementById('sA').value // RESTORED
     });
-
-    if(error) window.showNotification(error.message, "error");
-    else {
-        window.showNotification("Supplier Saved", "success");
-        document.getElementById('modal').style.display = 'none';
-        window.router('settings');
-    }
+    document.getElementById('modal').style.display = 'none';
+    window.showNotification("Saved", "success");
+    window.router('settings');
 };
 
-// --- LPO & INVENTORY UI FIXES ---
-window.createPOModal = async () => { 
-    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); 
-    const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id); 
+// --- STAFF (ACTIONS RESTORED) ---
+window.renderStaff = async (c) => {
+    if(!['manager', 'financial_controller'].includes(window.profile.role)) return c.innerHTML = '<div class="p-20 text-center text-slate-400">Restricted</div>';
     
-    if(!prods || !prods.length) return window.showNotification("No products found. Register products first.", "error"); 
-    
-    document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-xl mb-8 uppercase text-center tracking-tight text-slate-800">Create Purchase Order (LPO)</h3>
-        
-        <div class="input-group mb-8">
-            <label class="input-label mb-2 text-slate-500">Select Supplier</label>
-            ${(sups && sups.length) ? `
-                <select id="lpoSup" class="input-field py-3 text-lg font-bold text-slate-800 border-2 border-slate-200 focus:border-slate-900 transition">
-                    ${sups.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
-                </select>` 
-                : `<input id="lpoSupText" class="input-field py-3" placeholder="Enter Supplier Name Manually">`
-            }
-        </div>
+    const [staff, invites] = await Promise.all([
+        supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id),
+        supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending')
+    ]);
 
-        <div class="bg-slate-50 p-6 rounded-2xl border border-slate-200 mb-8 max-h-[400px] overflow-y-auto custom-scrollbar shadow-inner">
-            <p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Select Products & Quantities</p>
-            <div class="grid grid-cols-1 gap-4">
-                ${prods.map(p => `
-                    <div class="flex items-center gap-4 bg-white p-4 rounded-xl border border-slate-100 shadow-sm hover:border-slate-300 transition">
-                        <input type="checkbox" class="lpo-check w-5 h-5 accent-slate-900 cursor-pointer" value="${p.id}" data-price="${p.cost_price}">
-                        <div class="flex-1">
-                            <span class="block text-sm font-bold uppercase text-slate-800">${p.name}</span>
-                            <span class="text-[10px] text-slate-400 font-mono">Last Cost: ${window.formatPrice(p.cost_price)}</span>
-                        </div>
-                        <input type="number" id="qty-${p.id}" class="w-24 input-field py-2 text-center font-bold font-mono text-slate-900 border-slate-200" placeholder="Qty">
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-
-        <button onclick="window.execCreatePO()" class="btn-primary w-full py-4 text-sm tracking-widest shadow-xl shadow-slate-900/20">GENERATE ORDER</button>
-    `; 
-    document.getElementById('modal').style.display = 'flex'; 
+    c.innerHTML = `
+    <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
+    <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8">
+        <table class="w-full text-left">
+            <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead>
+            <tbody>${staff.data.map(s => `
+                <tr class="border-b last:border-0 hover:bg-slate-50 transition">
+                    <td class="p-4 font-bold text-slate-700">${s.full_name}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td>
+                    <td class="text-xs uppercase">${s.role.replace('_', ' ')}</td>
+                    <td class="text-xs uppercase">${s.locations?.name || 'All'}</td>
+                    <td class="text-right pr-6 flex justify-end gap-2 mt-3">
+                        <button onclick="window.viewLogs('${s.id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">LOGS</button>
+                        <button onclick="window.toggleSuspend('${s.id}', '${s.status}')" class="text-[10px] border px-2 py-1 rounded ${s.status==='active'?'text-red-500 hover:bg-red-50':'text-green-500 hover:bg-green-50'}">${s.status==='active'?'SUSPEND':'ACTIVATE'}</button>
+                    </td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+    </div>`;
 };
 
-// ... (Rest of existing functions remain largely same, just ensuring correct calls) ...
-
-window.renderInventory = async (c) => {
-    // ... (Keep existing logic, ensure buttons use defined functions)
+// ... (Retain Inventory, POS, Reports from previous robust versions) ...
+window.renderInventory = async (c) => { /* ... (Code as before) ... */ 
     const isPOView = window.currentInvView === 'po'; 
     const stock = await getInventory(window.profile.organization_id);
     let filteredStock = stock;
@@ -401,140 +339,6 @@ window.renderInventory = async (c) => {
     const canCreateLPO = ['manager', 'overall_storekeeper', 'deputy_manager', 'deputy_storekeeper'].includes(role);
     c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div><div class="flex gap-1 bg-slate-100 p-1.5 rounded-xl"><button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button><button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button></div><div class="flex gap-3">${canCreateLPO?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
 };
-
-// ... (Retain standard logic for POS, Reports, etc. but ensure they use RPC where possible) ...
-
-window.addProductModal = () => { 
-    if(!['manager','overall_storekeeper'].includes(window.profile.role)) return; 
-    const opts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join(''); 
-    const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join(''); 
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3><div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-4 mb-4"><div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Beverage">Beverage</option><option value="Food">Food</option><option value="Stationery">Stationery</option><option value="Linen">Linen</option><option value="Construction">Construction</option></select></div><div class="input-group mb-0"><label class="input-label">Unit (LPO)</label><select id="pUnit" class="input-field">${unitOpts}</select></div></div><div class="input-group mb-4"><label class="input-label">Items per Unit</label><input id="pConv" type="number" class="input-field font-mono font-bold" value="1"></div><div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">${opts}</select></div><div class="grid grid-cols-2 gap-4 mb-6"><div class="input-group mb-0"><label class="input-label">Cost Price</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Base Selling Price</label><input id="pS" type="number" class="input-field"></div></div><button onclick="window.nextProductStep()" class="btn-primary">Next: Location Pricing</button>`; 
-    document.getElementById('modal').style.display = 'flex'; 
-};
-
-window.nextProductStep = async () => {
-    // Validate Step 1
-    const name = document.getElementById('pN').value.toUpperCase();
-    const cost = parseFloat(document.getElementById('pC').value);
-    if(!name || isNaN(cost)) return window.showNotification("Invalid Input", "error");
-
-    window.tempProductData = {
-        name, 
-        category: document.getElementById('pCat').value,
-        unit: document.getElementById('pUnit').value,
-        conversion_factor: document.getElementById('pConv').value,
-        currency: document.getElementById('pCurrency').value,
-        cost,
-        selling: parseFloat(document.getElementById('pS').value)
-    };
-
-    // Load Locations for Pricing
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department'); 
-    const list = document.getElementById('price-list');
-    
-    if(locs.length === 0) {
-        window.finalizeProduct(); 
-        return;
-    }
-
-    list.innerHTML = locs.map(l => `
-        <div class="input-group mb-2">
-            <label class="input-label">${l.name}</label>
-            <input type="number" class="loc-price-input input-field" data-loc="${l.id}" value="${window.tempProductData.selling}" placeholder="Price">
-        </div>
-    `).join('');
-
-    document.getElementById('modal').style.display = 'none';
-    document.getElementById('price-modal').style.display = 'flex';
-};
-
-window.finalizeProduct = async () => {
-    const d = window.tempProductData;
-    const costBase = window.convertAmount(d.cost, d.currency, window.baseCurrency);
-    const sellingBase = window.convertAmount(d.selling, d.currency, window.baseCurrency);
-
-    const { data: prod, error } = await supabase.from('products').insert({
-        name: d.name, category: d.category, unit: d.unit, 
-        conversion_factor: d.conversion_factor, cost_price: costBase, 
-        selling_price: sellingBase, organization_id: window.profile.organization_id
-    }).select().single();
-
-    if(error) return window.showNotification(error.message, "error");
-
-    const priceInputs = document.querySelectorAll('.loc-price-input');
-    const prices = [];
-    priceInputs.forEach(i => {
-        if(i.value) prices.push({ organization_id: window.profile.organization_id, product_id: prod.id, location_id: i.dataset.loc, selling_price: window.convertAmount(parseFloat(i.value), d.currency, window.baseCurrency) });
-    });
-
-    if(prices.length > 0) await supabase.from('location_prices').insert(prices);
-
-    document.getElementById('price-modal').style.display = 'none';
-    window.showNotification("Product & Prices Saved", "success");
-    window.router('inventory');
-};
-
-window.execCreatePO = async () => { 
-    const supSelect = document.getElementById('lpoSup');
-    const supText = document.getElementById('lpoSupText');
-    const supId = supSelect ? supSelect.value : null;
-    const supName = supSelect ? supSelect.options[supSelect.selectedIndex].text : supText.value;
-    const checks = document.querySelectorAll('.lpo-check:checked'); 
-    
-    if(!supName || !checks.length) return window.showNotification("Invalid Order", "error"); 
-    
-    let total = 0, items = []; 
-    checks.forEach(c => { 
-        const qty = document.getElementById(`qty-${c.value}`).value; 
-        if(qty > 0) { 
-            const cost = c.getAttribute('data-price'); 
-            total += (qty * cost); 
-            items.push({ product_id: c.value, quantity: qty, unit_cost: cost }); 
-        } 
-    }); 
-    
-    const poData = { organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_name: supName, total_cost: total, status: 'Pending' }; 
-    if(supId) poData.supplier_id = supId; 
-    
-    const { data: po } = await supabase.from('purchase_orders').insert(poData).select().single(); 
-    await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id}))); 
-    
-    document.getElementById('modal').style.display = 'none'; 
-    window.showNotification("LPO Created Successfully", "success"); 
-    window.currentInvView = 'po'; 
-    window.router('inventory'); 
-};
-
-window.inviteModal = async () => {
-    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
-    document.getElementById('modal-content').innerHTML = `
-    <h3 class="font-bold text-lg mb-6 uppercase text-center">Invite Staff</h3>
-    <div class="input-group"><label class="input-label">Email</label><input id="iE" class="input-field"></div>
-    <div class="input-group"><label class="input-label">Role</label>
-        <select id="iR" class="input-field">
-            <option value="storekeeper">Storekeeper</option>
-            <option value="barman">Barman</option>
-            <option value="finance">Finance (Viewer)</option>
-            <option value="financial_controller">Financial Controller (Admin)</option>
-        </select>
-    </div>
-    <div class="input-group"><label class="input-label">Assign</label><select id="iL" class="input-field">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select></div>
-    <button onclick="window.execInvite()" class="btn-primary">SEND INVITE</button>`;
-    document.getElementById('modal').style.display = 'flex';
-};
-
-window.execInvite = async () => {
-    const email = document.getElementById('iE').value;
-    const role = document.getElementById('iR').value;
-    if(!email) return;
-    
-    await supabase.from('staff_invites').insert({ email, role, organization_id: window.profile.organization_id, assigned_location_id: document.getElementById('iL').value, status: 'pending' });
-    document.getElementById('modal').style.display = 'none';
-    window.showNotification("Invitation Sent", "success");
-    window.router('staff');
-};
-
-// ... (Other critical operational functions like POS remain) ...
 window.renderBar = async (c) => {
     const inv = await getInventory(window.profile.organization_id);
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department');
@@ -553,4 +357,121 @@ window.renderCart = () => { const l=document.getElementById('cart-list'), t=docu
 window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.renderCart(); };
 window.confirmCheckout = () => { if(!window.cart.length) return; window.premiumConfirm(`Confirm ${window.selectedPaymentMethod.toUpperCase()} Sale?`, "Charge this amount.", "Charge", window.doCheckout); };
 window.doCheckout = async () => { try { await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id, window.selectedPaymentMethod); window.showNotification("Sale Completed Successfully", "success"); window.cart=[]; window.renderCart(); window.router('bar'); } catch(e) { window.showNotification(e.message, "error"); } };
-// ... (Retain other existing functions if any, but ensure above key functions are prioritized)
+window.renderApprovals = async (c) => {
+    if(window.profile.role === 'storekeeper' || window.profile.role === 'barman') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
+    const reqs = await getPendingApprovals(window.profile.organization_id);
+    const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
+    c.innerHTML = `
+    <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1>
+    <div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${reqs.length ? reqs.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td><td class="p-6"><div class="text-blue-600 font-mono font-bold text-lg">${r.quantity}</div><div class="text-xs text-slate-400 uppercase mt-1">Requested</div></td><td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td><td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>'}</tbody></table></div></div>
+    <div><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust)</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${changes && changes.length ? changes.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action}</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div></td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>'}</tbody></table></div></div>`;
+};
+window.confirmApprove = (id) => { window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Authorized", "success"); window.router('approvals'); }); };
+window.approveChange = (id) => { window.premiumConfirm("Approve Change?", "Execute this request.", "Approve", async () => { await supabase.rpc('process_change_request', { p_request_id: id, p_status: 'approved', p_reviewer_id: window.profile.id }); window.showNotification("Executed", "success"); window.router('approvals'); }); };
+window.renderReports = async (c) => {
+    const isController = ['financial_controller', 'manager', 'overall_finance', 'deputy_manager', 'deputy_finance'].includes(window.profile.role);
+    const isVariance = window.currentRepView === 'variance';
+    if(isVariance) {
+        const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name, role, phone, id, assigned_location_id)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
+        c.innerHTML = `<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Reconciliation</h1><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button onclick="window.currentRepView='general'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">GENERAL</button><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">VARIANCE</button></div><button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-red-600 hover:bg-red-700">NEW COUNT</button></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead><tr class="bg-slate-50 border-b border-slate-100"><th class="p-4 text-xs text-slate-400 uppercase">Date</th><th class="text-xs text-slate-400 uppercase">Location</th><th class="text-xs text-slate-400 uppercase">Conducted By</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Report</th></tr></thead><tbody>${(takes||[]).map(t => `<tr><td class="p-4 text-xs font-bold text-slate-500">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs font-bold uppercase text-slate-800">${t.locations?.name}</td><td class="text-xs uppercase">${t.profiles?.full_name}</td><td class="text-right pr-6"><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px]">VIEW</button></td></tr>`).join('')}</tbody></table></div>`;
+    } else {
+        const { data: logs } = await supabase.from('transactions').select(`*, products (name, category), locations:to_location_id (name), from_loc:from_location_id (name), profiles:user_id (full_name, role, phone, id, assigned_location_id)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(500);
+        window.currentLogs = logs || [];
+        const { data: staff } = await supabase.from('profiles').select('id, full_name').eq('organization_id', window.profile.organization_id);
+        const { data: locs } = await supabase.from('locations').select('name').eq('organization_id', window.profile.organization_id);
+        
+        c.innerHTML = `
+        <div class="flex flex-col gap-6 mb-8">
+            <div class="flex justify-between items-center gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Reports</h1>${window.getCurrencySelectorHTML()}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">VARIANCE</button></div></div>
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 flex flex-wrap items-end gap-4 shadow-sm">
+                <div><label class="input-label">Start</label><input type="date" id="repStart" class="input-field w-32" onchange="window.filterReport()"></div>
+                <div><label class="input-label">End</label><input type="date" id="repEnd" class="input-field w-32" onchange="window.filterReport()"></div>
+                <div class="flex-1"><label class="input-label">Type</label><select id="repType" class="input-field" onchange="window.filterReport()"><option value="all">All Types</option><option value="sale">Sales</option><option value="receive">Received Stock</option><option value="transfer">Transfers</option></select></div>
+                <div class="flex-1"><label class="input-label">Staff</label><select id="repStaff" class="input-field" onchange="window.filterReport()"><option value="all">All Staff</option>${staff.map(s=>`<option value="${s.id}">${s.full_name}</option>`).join('')}</select></div>
+                <div class="flex-1"><label class="input-label">Category</label><select id="repCat" class="input-field" onchange="window.filterReport()"><option value="all">All Categories</option><option value="Beverage">Beverage</option><option value="Food">Food</option><option value="Stationery">Stationery</option></select></div>
+                <div><label class="input-label">Status</label><select id="repStat" class="input-field w-32" onchange="window.filterReport()"><option value="all">All</option><option value="valid">Valid</option><option value="void">Void</option></select></div>
+                <button onclick="window.exportCSV()" class="btn-primary w-auto px-6 h-[46px] bg-green-700 hover:bg-green-800">EXPORT</button>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Revenue</p><p class="text-4xl font-mono font-bold text-slate-900" id="repRev">...</p></div><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-mono font-bold text-green-600" id="repProf">...</p></div></div>
+        <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-4 pl-6 text-xs text-slate-400 uppercase tracking-widest">Date / Time</th><th class="text-xs text-slate-400 uppercase tracking-widest">Ref / Type</th><th class="text-xs text-slate-400 uppercase tracking-widest">Item / User</th><th class="text-xs text-slate-400 uppercase tracking-widest">Flow (From ➝ To)</th><th class="text-xs text-slate-400 uppercase tracking-widest">Detail</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right">Qty</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right">Amount</th>${isController?'<th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th>':''}</tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
+        window.filterReport();
+    }
+};
+window.filterReport = () => {
+    const start = document.getElementById('repStart')?.value;
+    const end = document.getElementById('repEnd')?.value;
+    const type = document.getElementById('repType')?.value;
+    const staff = document.getElementById('repStaff')?.value;
+    const cat = document.getElementById('repCat')?.value;
+    const stat = document.getElementById('repStat')?.value;
+
+    let f = window.currentLogs;
+    if(start) f = f.filter(l => new Date(l.created_at) >= new Date(start));
+    if(end) f = f.filter(l => new Date(l.created_at) <= new Date(end + 'T23:59:59'));
+    if(type && type !== 'all') f = f.filter(l => l.type === type);
+    if(staff && staff !== 'all') f = f.filter(l => l.user_id === staff);
+    if(cat && cat !== 'all') f = f.filter(l => l.products?.category === cat);
+    if(stat && stat !== 'all') f = f.filter(l => l.status === stat);
+    
+    const activeTx = f.filter(l => l.status !== 'void');
+    const totalSales = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
+    const totalProfit = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
+    document.getElementById('repRev').innerHTML = window.formatPrice(totalSales);
+    document.getElementById('repProf').innerHTML = window.formatPrice(totalProfit);
+
+    const b = document.getElementById('logsBody');
+    const isController = ['financial_controller', 'manager', 'overall_finance'].includes(window.profile.role);
+
+    b.innerHTML = f.map(l => {
+        const isVoid = l.status === 'void';
+        let actionColor='text-slate-800', detail='-', flow='-';
+        
+        if(l.type === 'sale') { 
+            actionColor='text-green-600'; 
+            detail=`PAID: ${(l.payment_method||'CASH').toUpperCase()}`;
+            flow = `${l.from_loc?.name || 'Store'} ➝ Client`;
+        }
+        else if(l.type === 'receive') { 
+            actionColor='text-blue-600'; 
+            detail=`LPO: ${l.reference || 'N/A'}`;
+            flow = `Supplier ➝ ${l.locations?.name}`;
+        }
+        else if(l.type === 'transfer') { 
+            actionColor='text-orange-600'; 
+            detail='INTERNAL MOVE';
+            flow = `${l.from_loc?.name} ➝ ${l.locations?.name}`;
+        }
+
+        return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition group ${isVoid ? 'bg-slate-50 opacity-50 grayscale' : ''}">
+            <td class="p-4 pl-6 text-xs font-bold text-slate-500 ${isVoid ? 'line-through' : ''}">${new Date(l.created_at).toLocaleDateString()}<br><span class="opacity-50">${new Date(l.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></td>
+            <td class="p-4 text-xs font-bold ${actionColor} uppercase ${isVoid ? 'line-through' : ''}">${l.type}<br><span class="text-slate-400 text-[9px]">${l.reference || ''}</span></td>
+            <td class="p-4 text-xs text-slate-600 font-medium ${isVoid ? 'line-through' : ''}"><div class="font-bold">${l.products?.name}</div><div class="text-[9px] text-slate-400">By: ${l.profiles?.full_name}</div></td>
+            <td class="p-4 text-xs font-mono text-slate-500 uppercase ${isVoid ? 'line-through' : ''}">${flow}</td>
+            <td class="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider ${isVoid ? 'line-through' : ''}">${detail}</td>
+            <td class="p-4 text-right font-mono text-sm font-bold text-slate-900 ${isVoid ? 'line-through' : ''}">${l.quantity}</td>
+            <td class="p-4 text-right font-mono text-sm font-bold text-slate-900 ${isVoid ? 'line-through' : ''}">${window.formatPrice(l.total_value)}</td>
+            ${isController && !isVoid ? `<td class="text-right pr-6"><button onclick="window.requestDeleteTransaction('${l.id}')" class="text-[9px] bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-100">VOID</button></td>` : isController ? `<td class="text-right pr-6"><span class="text-[9px] text-red-400 font-bold">VOIDED</span></td>` : ''}
+        </tr>`;
+    }).join('');
+};
+window.requestDeleteTransaction = async (id) => {
+    window.premiumConfirm("Request Void?", "Admin must approve.", "Send Request", async () => {
+        await supabase.from('change_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, target_table: 'transactions', target_id: id, action: 'VOID', status: 'pending' });
+        window.showNotification("Request Sent", "success");
+    });
+};
+window.exportCSV = () => { let rows=[["Date","Time","Action","Item","User","Flow","Detail","Status","Quantity","Value"]]; const f=window.currentLogs; f.forEach(l=>{ rows.push([new Date(l.created_at).toLocaleDateString(),new Date(l.created_at).toLocaleTimeString(),l.type,l.products?.name,l.profiles?.full_name,`${l.from_loc?.name||''}->${l.locations?.name||''}`,l.payment_method||'-',l.status||'valid',l.quantity,l.total_value||0]); }); let csvContent="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n"); let link=document.createElement("a"); link.setAttribute("href",encodeURI(csvContent)); link.setAttribute("download",`Report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); };
+window.confirmReceive = (id) => { window.premiumConfirm("Confirm Receipt", "Are you sure you have physically received these items?", "Receive Stock", () => window.receivePO(id)); };
+window.receivePO = async (id) => { const { error } = await supabase.rpc('receive_stock_wac', { p_po_id: id, p_user_id: window.profile.id, p_org_id: window.profile.organization_id }); if (error) window.showNotification(error.message, "error"); else { window.showNotification("Stock Received (WAC Updated)", "success"); window.router('inventory'); } };
+window.addStockModal = async () => { if(window.profile.role !== 'manager' && window.profile.role !== 'overall_storekeeper') return; const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Receive Stock</h3><div class="input-group"><label class="input-label">Item</label><select id="sP" class="input-field">${prods.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Store</label><select id="sL" class="input-field">${locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div><button onclick="window.execAddStock()" class="btn-primary">CONFIRM</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.execAddStock = async () => { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(qty <= 0) return; await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: window.profile.organization_id }); await supabase.from('transactions').insert({ organization_id: window.profile.organization_id, user_id: window.profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Added", "success"); window.router('inventory'); };
+window.issueModal = async (name, id, fromLoc) => { window.selectedDestinationId = null; const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).neq('id', fromLoc); const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Move: ${name}</h3><div class="grid grid-cols-2 gap-2 mb-4 max-h-40 overflow-y-auto">${html}</div><div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div><button onclick="window.execIssue('${id}', '${fromLoc}')" class="btn-primary">TRANSFER</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white')); el.classList.add('bg-slate-900', 'text-white'); window.selectedDestinationId = id; };
+window.execIssue = async (pid, fromLoc) => { const qty = document.getElementById('tQty').value; if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error"); try { await transferStock(pid, fromLoc, window.selectedDestinationId, qty, window.profile.id, window.profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Request Sent", "success"); } catch(e) { window.showNotification(e.message, "error"); } };
+window.createPOModal = async () => { const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id); if(!prods || !prods.length) return window.showNotification("No products found.", "error"); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Create LPO</h3><div class="input-group"><label class="input-label">Supplier</label>${(sups && sups.length) ? `<select id="lpoSup" class="input-field">${sups.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}</select>` : `<input id="lpoSupText" class="input-field" placeholder="Enter Supplier Name">`}</div><div class="bg-slate-50 p-4 rounded-xl border mb-4 max-h-60 overflow-y-auto">${prods.map(p => `<div class="flex items-center gap-2 mb-2"><input type="checkbox" class="lpo-check w-4 h-4" value="${p.id}" data-price="${p.cost_price}"><span class="flex-1 text-xs font-bold uppercase">${p.name}</span><input type="number" id="qty-${p.id}" class="w-16 input-field p-1 text-xs" placeholder="Qty"></div>`).join('')}</div><button onclick="window.execCreatePO()" class="btn-primary">GENERATE ORDER</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.execCreatePO = async () => { const supSelect = document.getElementById('lpoSup'), supText = document.getElementById('lpoSupText'), supId = supSelect ? supSelect.value : null, supName = supSelect ? supSelect.options[supSelect.selectedIndex].text : supText.value, checks = document.querySelectorAll('.lpo-check:checked'); if(!supName || !checks.length) return window.showNotification("Invalid Order", "error"); let total = 0, items = []; checks.forEach(c => { const qty = document.getElementById(`qty-${c.value}`).value; if(qty > 0) { const cost = c.getAttribute('data-price'); total += (qty * cost); items.push({ product_id: c.value, quantity: qty, unit_cost: cost }); } }); const poData = { organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_name: supName, total_cost: total, status: 'Pending' }; if(supId) poData.supplier_id = supId; const { data: po } = await supabase.from('purchase_orders').insert(poData).select().single(); await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id}))); document.getElementById('modal').style.display = 'none'; window.showNotification("LPO Created", "success"); window.currentInvView = 'po'; window.router('inventory'); };
+window.newStockTakeModal = async () => { const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Stock Take</h3><div class="input-group"><label class="input-label">Location</label><select id="stLoc" class="input-field">${locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select></div><button onclick="window.startStockTake()" class="btn-primary">START</button>`; document.getElementById('modal').style.display = 'flex'; };
+window.startStockTake = async () => { const locId = document.getElementById('stLoc').value; const inv = await getInventory(window.profile.organization_id); const items = inv.filter(x => x.location_id === locId); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Count Items</h3><div class="bg-slate-50 p-2 rounded max-h-60 overflow-y-auto mb-4 border">${items.map(i => `<div class="flex justify-between items-center mb-2"><span class="text-xs font-bold w-1/2">${i.products.name}</span><input type="number" class="st-input w-20 border rounded p-1 text-center font-bold text-slate-900" data-id="${i.product_id}" data-sys="${i.quantity}" placeholder="Count"></div>`).join('')}</div><button onclick="window.saveStockTake('${locId}')" class="btn-primary">SUBMIT VARIANCE</button>`; };
+window.saveStockTake = async (locId) => { const inputs = document.querySelectorAll('.st-input'); const { data: st } = await supabase.from('stock_takes').insert({ organization_id: window.profile.organization_id, location_id: locId, conducted_by: window.profile.id, status: 'Completed' }).select().single(); const items = Array.from(inputs).map(i => ({ stock_take_id: st.id, product_id: i.getAttribute('data-id'), system_qty: i.getAttribute('data-sys'), physical_qty: i.value || 0 })); await supabase.from('stock_take_items').insert(items); document.getElementById('modal').style.display = 'none'; window.showNotification("Audit Complete", "success"); window.currentRepView = 'variance'; window.router('reports'); };
+window.viewVariance = async (id) => { const { data: items } = await supabase.from('stock_take_items').select('*, products(name)').eq('stock_take_id', id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Variance Report</h3><table class="w-full text-xs text-left border"><thead><tr class="bg-slate-100"><th>Item</th><th>Sys</th><th>Phys</th><th>Var</th></tr></thead><tbody>${items.map(i => `<tr><td class="p-2 font-bold">${i.products.name}</td><td>${i.system_qty}</td><td>${i.physical_qty}</td><td class="${i.variance<0?'text-red-600 font-bold':''}">${i.variance}</td></tr>`).join('')}</tbody></table>`; document.getElementById('modal').style.display = 'flex'; };
