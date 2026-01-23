@@ -2,7 +2,9 @@ import { getSession, logout } from './auth.js';
 import { getInventory, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
-// --- 1. GLOBAL STATE & CONFIGURATION ---
+// ============================================================================
+// 1. ENTERPRISE CONFIGURATION & CONSTANTS
+// ============================================================================
 window.profile = null;
 window.currentLogs = [];
 window.cart = [];
@@ -14,29 +16,46 @@ window.cachedLocations = [];
 window.cachedSuppliers = [];
 window.selectedPaymentMethod = 'cash'; 
 window.tempProductData = null;
-window.tempLocs = []; 
-window.currentInvView = 'stock'; // Default view
-window.currentRepView = 'general'; // Default view
+window.currentInvView = 'stock';
+window.currentRepView = 'general';
 
-// Constants
-const ALL_UNITS = ['Crate', 'Carton', 'Dozen', 'Pcs', 'Kg', 'Ltr', 'Box', 'Bag', 'Packet', 'Set', 'Roll', 'Tin', 'Bundle', 'Pallet', 'Mita', 'Galoni'];
+// GLOBAL STANDARD CATEGORIES (EXPANDED)
+const PRODUCT_CATEGORIES = [
+    'Beverage', 'Food', 'Stationery', 'Linen', 
+    'Construction', 'Electronics', 'Automotive', 'Cleaning', 
+    'Furniture', 'IT Equipment', 'Kitchenware', 'Maintenance', 
+    'Chemicals', 'Fuel', 'Medical', 'General'
+];
+
+const ALL_UNITS = ['Pcs', 'Crate', 'Carton', 'Dozen', 'Kg', 'Ltr', 'Box', 'Bag', 'Packet', 'Set', 'Roll', 'Tin', 'Bundle', 'Pallet', 'Mita', 'Galoni', 'Trip', 'Bucket'];
 const ALL_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'];
 
-// --- 2. BRANDING ENFORCEMENT ---
+// ============================================================================
+// 2. BRANDING ENFORCEMENT (DOM INTERCEPTOR)
+// ============================================================================
 (function enforceBranding() {
+    // Badilisha Title Bar
     document.title = "ugaviSmarT | Enterprise ERP";
-    const brandElements = document.querySelectorAll('.brand-logo, .logo-text, h1');
-    brandElements.forEach(el => {
-        if(el.innerText.includes('Pilot')) el.innerText = "ugaviSmarT";
+    
+    // Tafuta na badilisha maandishi yote hata kwenye Login Screen
+    const observer = new MutationObserver(() => {
+        document.querySelectorAll('.brand-logo, .logo-text, h1, h2, title').forEach(el => {
+            if (el.innerText.toLowerCase().includes('pilot')) {
+                el.innerText = "ugaviSmarT";
+            }
+        });
     });
+    observer.observe(document.body, { childList: true, subtree: true });
 })();
 
-// --- 3. GLOBAL UTILITIES & CURRENCY ---
+// ============================================================================
+// 3. GLOBAL UTILITIES (CRITICAL FUNCTIONS)
+// ============================================================================
 window.closeModalOutside = (e) => { if (e.target.classList.contains('modal-backdrop')) e.target.style.display = 'none'; };
 
 window.showNotification = (message, type = 'success') => {
     const container = document.getElementById('toast-container');
-    if(!container) return alert(message);
+    if(!container) return alert(message); // Fallback protection
     const div = document.createElement('div');
     div.className = `px-6 py-4 rounded-xl text-white font-bold shadow-2xl flex items-center gap-3 transition-all duration-300 transform translate-y-0 ${type === 'success' ? 'bg-[#0F172A]' : 'bg-red-600'}`;
     div.innerHTML = `<span>${message}</span>`;
@@ -58,6 +77,7 @@ window.premiumConfirm = (title, desc, btnText, callback) => {
     });
 };
 
+// Currency Logic (Defined Top-Level to prevent 'not a function' errors)
 window.initCurrency = async () => { 
     if (!window.profile) return; 
     try { 
@@ -67,7 +87,7 @@ window.initCurrency = async () => {
         window.currencyRates = {}; 
         window.currencyRates[window.baseCurrency] = 1; 
         (rates||[]).forEach(r => window.currencyRates[r.currency_code] = Number(r.rate)); 
-    } catch(e){ console.error("Currency Init Error", e); } 
+    } catch(e){ console.error("Currency Init Failed", e); } 
 };
 
 window.convertAmount = (amount, fromCurr, toCurr) => { 
@@ -96,10 +116,14 @@ window.getCurrencySelectorHTML = () => {
     return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4 shadow-sm h-8">${options}</select>`; 
 };
 
-// --- 4. INITIALIZATION ---
+// ============================================================================
+// 4. SYSTEM INITIALIZATION & ROUTING
+// ============================================================================
 window.onload = async () => {
     window.logoutAction = logout;
     const session = await getSession();
+    
+    // Security Redirect
     if (!session) { 
         if(!window.location.href.includes('index.html')) window.location.href = 'index.html'; 
         return; 
@@ -113,6 +137,7 @@ window.onload = async () => {
             prof = retry.data; 
         }
         
+        // Setup Workflow Trigger
         if (!prof || !prof.organization_id) { 
             const setupCurr = document.getElementById('setupBaseCurr'); 
             if(setupCurr) setupCurr.innerHTML = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
@@ -121,11 +146,11 @@ window.onload = async () => {
             return; 
         }
         
-        if (prof.status === 'suspended') { await logout(); alert("Account Suspended."); return; }
+        if (prof.status === 'suspended') { await logout(); alert("Account Suspended. Contact Financial Controller."); return; }
         
         window.profile = prof;
         
-        // Cache Loading
+        // Cache Critical Data
         const [locsRes, supsRes] = await Promise.all([
             supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
             supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
@@ -135,19 +160,20 @@ window.onload = async () => {
         
         await window.initCurrency();
         
-        // Role UI Hiding
+        // Role-Based UI Control
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
         
         if (role === 'finance' || role === 'deputy_finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
-        else if (role === 'financial_controller') hide(['nav-bar', 'nav-settings']); 
+        else if (role === 'financial_controller') hide(['nav-bar', 'nav-settings']); // Controller sees Reports, Inventory, Staff
         else if (role === 'storekeeper' || role === 'deputy_storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
         else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
         
-        if (['overall_storekeeper', 'deputy_storekeeper', 'manager', 'deputy_manager'].includes(role)) window.router('inventory');
+        // Router Logic
+        if (['overall_storekeeper', 'deputy_storekeeper', 'manager', 'deputy_manager', 'financial_controller'].includes(role)) window.router('inventory');
         else window.router(role === 'barman' ? 'bar' : 'inventory');
 
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error("Init Error:", e); }
 };
 
 window.router = async (view) => { 
@@ -159,6 +185,7 @@ window.router = async (view) => {
     
     setTimeout(async () => { 
         try { 
+            // All functions are defined below, safe to call
             if (view === 'inventory') await window.renderInventory(app); 
             else if (view === 'bar') await window.renderBar(app); 
             else if (view === 'approvals') await window.renderApprovals(app); 
@@ -167,37 +194,49 @@ window.router = async (view) => {
             else if (view === 'settings') await window.renderSettings(app); 
         } catch (e) { 
             console.error(e); 
-            app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`; 
+            app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">System Error loading ${view}: ${e.message}</div>`; 
         } 
     }, 50); 
 };
 
-// --- 5. SETUP RPC ---
 window.saveName = async () => { 
     const orgName = document.getElementById('orgNameInput').value;
     const name = document.getElementById('userNameInput').value; 
     const phone = document.getElementById('userPhoneInput').value; 
-    if (!orgName || !name) return window.showNotification("Fields Required", "error");
+    if (!orgName || !name) return window.showNotification("All Fields Required", "error");
     const { data, error } = await supabase.rpc('create_setup_data', { p_org_name: orgName, p_full_name: name, p_phone: phone });
     if (error) return window.showNotification("Setup Error: " + error.message, "error");
     document.getElementById('name-modal').style.display = 'none';
-    window.showNotification("Setup Complete", "success");
+    window.showNotification("Welcome to ugaviSmarT", "success");
     location.reload(); 
 };
 
-// --- 6. INVENTORY MODULE (COMPLETE) ---
+// ============================================================================
+// 5. INVENTORY MANAGEMENT (Oracle Standard)
+// ============================================================================
 window.renderInventory = async (c) => {
     const isPOView = window.currentInvView === 'po'; 
-    const stock = await getInventory(window.profile.organization_id);
-    let filteredStock = stock;
     
+    // LOGIC: Financial Controller sees ALL Stock regardless of location
+    let stock = [];
+    if (window.profile.role === 'financial_controller') {
+        // Fetch ALL stock for Controller
+        const res = await supabase.from('inventory').select('*, products(*), locations(name)').eq('organization_id', window.profile.organization_id);
+        stock = res.data || [];
+    } else {
+        stock = await getInventory(window.profile.organization_id);
+    }
+
+    let filteredStock = stock;
     const role = window.profile.role;
+    
+    // Additional Filtering
     if (role === 'barman') filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id && x.products.category === 'Beverage');
     else if (role.includes('storekeeper')) filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id);
     
     const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'overall_finance'].includes(role);
     const canAdjust = ['manager', 'deputy_manager', 'financial_controller', 'overall_storekeeper'].includes(role);
-    const canCreateLPO = ['manager', 'deputy_manager', 'overall_storekeeper'].includes(role);
+    const canCreateLPO = ['manager', 'deputy_manager', 'overall_storekeeper', 'financial_controller'].includes(role);
 
     let content = '';
     
@@ -214,8 +253,8 @@ window.renderInventory = async (c) => {
                     <td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td>
                     <td class="text-sm font-bold text-slate-800 uppercase">${p.suppliers?.name || 'Unknown'}</td>
                     <td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td>
-                    <td><span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase ${p.status==='Pending'?'bg-yellow-50 text-yellow-600':'bg-green-50 text-green-600'}">${p.status}</span></td>
-                    <td>${p.status!=='Received'?`<button onclick="window.openPartialReceive('${p.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 font-bold">RECEIVE</button>`:'<span class="text-slate-300 text-[10px] font-bold">COMPLETED</span>'}</td>
+                    <td><span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase ${p.status==='Pending'?'bg-yellow-50 text-yellow-600': p.status==='Partial'?'bg-blue-50 text-blue-600' :'bg-green-50 text-green-600'}">${p.status}</span></td>
+                    <td>${p.status !== 'Received' ? `<button onclick="window.openReceiveModal('${p.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 font-bold shadow-sm">RECEIVE (GRN)</button>` : '<span class="text-slate-300 text-[10px] font-bold">COMPLETED</span>'}</td>
                 </tr>`).join('')}
             </tbody>
         </table>`;
@@ -234,7 +273,10 @@ window.renderInventory = async (c) => {
                     <td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td>
                     <td class="text-right pr-6 flex justify-end gap-2 mt-3">
                         ${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold border border-slate-200 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-900 hover:text-white transition">MOVE</button>`:''}
-                        ${canAdjust ? `<button onclick="window.openStockEdit('${i.id}', '${i.quantity}')" class="text-[10px] font-bold border border-slate-200 text-slate-500 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition">EDIT</button><button onclick="window.requestDeleteProduct('${i.products.id}')" class="text-[10px] font-bold border border-red-100 text-red-500 px-3 py-1.5 rounded-lg hover:bg-red-50 transition">DEL</button>` : ''}
+                        ${canAdjust ? `
+                            <button onclick="window.openStockEdit('${i.id}', '${i.quantity}')" class="text-[10px] font-bold border border-slate-200 text-slate-500 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition">EDIT</button>
+                            <button onclick="window.requestDeleteProduct('${i.products.id}')" class="text-[10px] font-bold border border-red-100 text-red-500 px-3 py-1.5 rounded-lg hover:bg-red-50 transition">DEL</button>
+                        ` : ''}
                     </td>
                 </tr>`).join('')}
             </tbody>
@@ -243,7 +285,10 @@ window.renderInventory = async (c) => {
     
     c.innerHTML = `
     <div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8">
-        <div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div>
+        <div class="flex items-center gap-4">
+            <h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Inventory</h1>
+            ${showPrice ? window.getCurrencySelectorHTML() : ''}
+        </div>
         <div class="flex gap-1 bg-slate-100 p-1.5 rounded-xl">
             <button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button>
             <button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button>
@@ -255,19 +300,22 @@ window.renderInventory = async (c) => {
     <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
 };
 
-// --- 7. LPO & PRODUCT MODALS (FIXED SUPPLIER LOGIC) ---
+// ============================================================================
+// 6. LPO & PRODUCT (PARTIAL RECEIVING & VALIDATION)
+// ============================================================================
+
+// A. Create LPO (Strict Supplier Check)
 window.createPOModal = async () => { 
-    // Ensure we have registered suppliers only
     const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); 
     const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id); 
     
-    if(!sups || sups.length === 0) return window.showNotification("Please Register a Supplier in Settings first.", "error");
-    if(!prods || prods.length === 0) return window.showNotification("No products found. Register products first.", "error"); 
+    if(!sups || sups.length === 0) return window.showNotification("No Suppliers Found. Register in Settings.", "error");
+    if(!prods || prods.length === 0) return window.showNotification("No Products Found. Register Products first.", "error"); 
     
     document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-xl mb-6 uppercase text-center">Create Purchase Order</h3>
+        <h3 class="font-bold text-xl mb-6 uppercase text-center">Create LPO</h3>
         <div class="input-group mb-4">
-            <label class="input-label">Select Registered Supplier</label>
+            <label class="input-label">Select Supplier</label>
             <select id="lpoSup" class="input-field font-bold text-slate-800 border-2 border-slate-200 focus:border-slate-900">
                 ${sups.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}
             </select>
@@ -292,7 +340,7 @@ window.execCreatePO = async () => {
     const supName = supSelect.options[supSelect.selectedIndex].text;
     const checks = document.querySelectorAll('.lpo-check:checked'); 
     
-    if(!supId || !checks.length) return window.showNotification("Invalid Order Selection", "error"); 
+    if(!supId || !checks.length) return window.showNotification("Invalid Selection", "error"); 
     
     let total = 0, items = []; 
     checks.forEach(c => { 
@@ -300,12 +348,17 @@ window.execCreatePO = async () => {
         if(qty > 0) { 
             const cost = c.getAttribute('data-price'); 
             total += (qty * cost); 
-            items.push({ product_id: c.value, quantity: qty, unit_cost: cost }); 
+            items.push({ product_id: c.value, quantity: qty, unit_cost: cost, received_qty: 0 }); // Init received_qty
         } 
     }); 
     
+    if(items.length === 0) return window.showNotification("Quantity required for selected items", "error");
+
     const poData = { organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_id: supId, supplier_name: supName, total_cost: total, status: 'Pending' }; 
-    const { data: po } = await supabase.from('purchase_orders').insert(poData).select().single(); 
+    const { data: po, error } = await supabase.from('purchase_orders').insert(poData).select().single(); 
+    
+    if(error) return window.showNotification("Failed to create PO: " + error.message, "error");
+
     await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id}))); 
     
     document.getElementById('modal').style.display = 'none'; 
@@ -314,12 +367,96 @@ window.execCreatePO = async () => {
     window.router('inventory'); 
 };
 
-// Product Wizard (Restored)
+// B. Partial Receiving (GRN Modal) - NEW ENTERPRISE FEATURE
+window.openReceiveModal = async (poId) => {
+    // Fetch items specifically for this PO
+    const { data: items } = await supabase.from('po_items').select('*, products(name, unit)').eq('po_id', poId);
+    
+    if(!items || items.length === 0) return window.showNotification("No items found in this LPO", "error");
+
+    const itemRows = items.map(i => {
+        const remaining = i.quantity - (i.received_qty || 0);
+        if(remaining <= 0) return ''; // Skip fully received items
+        return `
+        <div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded-lg border">
+            <div class="w-1/2">
+                <span class="block text-xs font-bold uppercase text-slate-800">${i.products?.name}</span>
+                <span class="text-[10px] text-slate-500">Ordered: ${i.quantity} | Received: ${i.received_qty}</span>
+            </div>
+            <div class="w-1/2 flex gap-2 items-center justify-end">
+                <span class="text-[10px] font-bold text-slate-400">Receive Now:</span>
+                <input type="number" class="receive-input w-20 input-field text-center font-bold text-blue-600" 
+                       data-id="${i.id}" data-pid="${i.products.id}" data-cost="${i.unit_cost}" max="${remaining}" placeholder="${remaining}">
+            </div>
+        </div>`;
+    }).join('');
+
+    if(!itemRows) return window.showNotification("All items already received.", "success");
+
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-2 uppercase text-center">Goods Received Note (GRN)</h3>
+        <p class="text-xs text-center text-slate-400 mb-6">LPO #${poId.split('-')[0]}</p>
+        <div class="mb-6 max-h-[400px] overflow-y-auto custom-scrollbar">${itemRows}</div>
+        <button onclick="window.execReceivePO('${poId}')" class="btn-primary w-full bg-blue-600 hover:bg-blue-700">CONFIRM RECEIPT</button>
+    `;
+    document.getElementById('modal').style.display = 'flex';
+};
+
+window.execReceivePO = async (poId) => {
+    const inputs = document.querySelectorAll('.receive-input');
+    const itemsToReceive = [];
+    
+    inputs.forEach(inp => {
+        const qty = parseFloat(inp.value);
+        if(qty > 0) {
+            itemsToReceive.push({
+                product_id: inp.dataset.pid,
+                qty: qty,
+                unit_cost: parseFloat(inp.dataset.cost)
+            });
+        }
+    });
+
+    if(itemsToReceive.length === 0) return window.showNotification("No quantities entered", "error");
+
+    window.premiumConfirm("Confirm Goods Receipt", "This will update stock and WAC.", "Confirm", async () => {
+        const { error } = await supabase.rpc('receive_stock_partial', {
+            p_po_id: poId,
+            p_user_id: window.profile.id,
+            p_org_id: window.profile.organization_id,
+            p_items: itemsToReceive // JSONB array
+        });
+
+        if(error) window.showNotification(error.message, "error");
+        else {
+            window.showNotification("Stock Received Successfully", "success");
+            document.getElementById('modal').style.display = 'none';
+            window.router('inventory');
+        }
+    });
+};
+
+// C. Product Wizard (Restored Categories)
 window.addProductModal = () => { 
     if(!['manager','overall_storekeeper'].includes(window.profile.role)) return; 
     const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join(''); 
+    const catOpts = PRODUCT_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('');
     const currOpts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3><div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-4 mb-4"><div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Beverage">Beverage</option><option value="Food">Food</option><option value="Stationery">Stationery</option><option value="Linen">Linen</option></select></div><div class="input-group mb-0"><label class="input-label">Unit</label><select id="pUnit" class="input-field">${unitOpts}</select></div></div><div class="input-group mb-4"><label class="input-label">Conversion</label><input id="pConv" type="number" class="input-field" value="1"></div><div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field">${currOpts}</select></div><div class="grid grid-cols-2 gap-4 mb-6"><div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div></div><button onclick="window.nextProductStep()" class="btn-primary">Next: Prices</button>`; 
+
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
+        <div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field">${catOpts}</select></div>
+            <div class="input-group mb-0"><label class="input-label">Unit</label><select id="pUnit" class="input-field">${unitOpts}</select></div>
+        </div>
+        <div class="input-group mb-4"><label class="input-label">Conversion</label><input id="pConv" type="number" class="input-field" value="1"></div>
+        <div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field">${currOpts}</select></div>
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="input-group mb-0"><label class="input-label">Cost</label><input id="pC" type="number" class="input-field"></div>
+            <div class="input-group mb-0"><label class="input-label">Selling</label><input id="pS" type="number" class="input-field"></div>
+        </div>
+        <button onclick="window.nextProductStep()" class="btn-primary">Next: Prices</button>`; 
     document.getElementById('modal').style.display = 'flex'; 
 };
 
@@ -347,7 +484,9 @@ window.finalizeProduct = async () => {
     window.router('inventory');
 };
 
-// --- 8. BAR / POS MODULE (COMPLETE) ---
+// ============================================================================
+// 7. BAR / POS (UNIT SALES & PAYMENT MODES)
+// ============================================================================
 window.renderBar = async (c) => {
     const inv = await getInventory(window.profile.organization_id);
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department');
@@ -355,8 +494,9 @@ window.renderBar = async (c) => {
     else if (!window.activePosLocationId && locs.length) window.activePosLocationId = locs[0].id;
     const items = inv.filter(x => x.location_id === window.activePosLocationId && x.products.category === 'Beverage');
     const storeSelect = (window.profile.role !== 'barman') ? `<div class="mb-8 flex items-center gap-4"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Active Counter:</span><select onchange="window.switchBar(this.value)" class="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer shadow-sm min-w-[200px]">${locs.map(l => `<option value="${l.id}" ${window.activePosLocationId===l.id?'selected':''}>${l.name}</option>`).join('')}</select></div>` : '';
-    const payMethods = ['cash', 'mobile', 'card', 'credit'].map(m => `<button onclick="window.setPaymentMethod('${m}')" class="pay-btn flex-1 py-2 text-[10px] font-bold uppercase rounded-lg border transition ${window.selectedPaymentMethod === m ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}">${m}</button>`).join('');
-    c.innerHTML = `${storeSelect} <div class="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)]"><div class="flex-1 overflow-y-auto pr-2"><div class="flex justify-between items-center mb-6 sticky top-0 bg-[#F8FAFC] py-2 z-10"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">POS Terminal</h1>${window.getCurrencySelectorHTML()}</div><div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">${items.length ? items.map(x => `<div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-5 rounded-2xl border border-slate-100 cursor-pointer hover:border-slate-900 transition-all duration-200 hover:shadow-lg hover:-translate-y-1 group relative overflow-hidden"><div class="flex justify-between items-start mb-2"><div class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 font-bold text-[10px] group-hover:bg-slate-900 group-hover:text-white transition">${x.products.name.charAt(0)}</div><span class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full border border-slate-100 group-hover:border-slate-200">Qty: ${x.quantity}</span></div><p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 truncate">${x.products.name}</p><p class="text-lg font-bold text-slate-900 font-mono">${window.formatPrice(x.products.selling_price)}</p></div>`).join('') : '<div class="col-span-full py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl"><p class="text-slate-400 font-bold text-sm uppercase">No beverages available.</p></div>'}</div></div><div class="w-full lg:w-96 bg-white border border-slate-200 rounded-[32px] p-8 h-full flex flex-col shadow-2xl shadow-slate-200/50"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase text-slate-900 tracking-widest">Current Order</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded transition">CLEAR ALL</button></div><div id="cart-list" class="flex-1 overflow-y-auto space-y-3 pr-1"></div><div class="pt-6 border-t border-slate-100 mt-auto"><div class="mb-4"><p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Payment Method</p><div class="flex gap-2">${payMethods}</div></div><div class="flex justify-between items-end mb-6"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Amount</span><span id="cart-total" class="text-3xl font-bold text-slate-900 font-mono">${window.formatPrice(0)}</span></div><button onclick="window.confirmCheckout()" class="w-full bg-[#0F172A] text-white py-4 rounded-2xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 shadow-xl shadow-slate-900/20 active:scale-95 transition">Charge Sale</button></div></div></div>`;
+    const payMethods = ['Cash', 'Mobile Money', 'Credit Card', 'Room Charge'].map(m => `<button onclick="window.setPaymentMethod('${m}')" class="pay-btn flex-1 py-2 text-[10px] font-bold uppercase rounded-lg border transition ${window.selectedPaymentMethod === m ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}">${m}</button>`).join('');
+    
+    c.innerHTML = `${storeSelect} <div class="flex flex-col lg:flex-row gap-8 h-[calc(100vh-140px)]"><div class="flex-1 overflow-y-auto pr-2"><div class="flex justify-between items-center mb-6 sticky top-0 bg-[#F8FAFC] py-2 z-10"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">POS Terminal</h1>${window.getCurrencySelectorHTML()}</div><div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 pb-20">${items.length ? items.map(x => `<div onclick="window.addCart('${x.products.name}', ${x.products.selling_price}, '${x.product_id}')" class="bg-white p-5 rounded-2xl border border-slate-100 cursor-pointer hover:border-slate-900 transition-all duration-200 hover:shadow-lg hover:-translate-y-1 group relative overflow-hidden"><div class="flex justify-between items-start mb-2"><div class="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 font-bold text-[10px] group-hover:bg-slate-900 group-hover:text-white transition">${x.products.name.charAt(0)}</div><span class="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full border border-slate-100 group-hover:border-slate-200">Qty: ${x.quantity}</span></div><p class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 truncate">${x.products.name}</p><p class="text-lg font-bold text-slate-900 font-mono">${window.formatPrice(x.products.selling_price)}</p></div>`).join('') : '<div class="col-span-full py-20 text-center border-2 border-dashed border-slate-200 rounded-3xl"><p class="text-slate-400 font-bold text-sm uppercase">No beverages available.</p></div>'}</div></div><div class="w-full lg:w-96 bg-white border border-slate-200 rounded-[32px] p-8 h-full flex flex-col shadow-2xl shadow-slate-200/50"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase text-slate-900 tracking-widest">Current Order</h3><button onclick="window.cart=[];window.renderCart()" class="text-[10px] font-bold text-red-500 hover:bg-red-50 px-2 py-1 rounded transition">CLEAR ALL</button></div><div id="cart-list" class="flex-1 overflow-y-auto space-y-3 pr-1"></div><div class="pt-6 border-t border-slate-100 mt-auto"><div class="mb-4"><p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Payment Method</p><div class="flex gap-2 flex-wrap">${payMethods}</div></div><div class="flex justify-between items-end mb-6"><span class="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Amount</span><span id="cart-total" class="text-3xl font-bold text-slate-900 font-mono">${window.formatPrice(0)}</span></div><button onclick="window.confirmCheckout()" class="w-full bg-[#0F172A] text-white py-4 rounded-2xl font-bold text-sm uppercase tracking-widest hover:bg-slate-800 shadow-xl shadow-slate-900/20 active:scale-95 transition">Charge Sale</button></div></div></div>`;
     window.renderCart();
 };
 window.switchBar = (id) => { window.activePosLocationId = id; window.router('bar'); };
@@ -367,7 +507,9 @@ window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.
 window.confirmCheckout = () => { if(!window.cart.length) return; window.premiumConfirm(`Confirm ${window.selectedPaymentMethod.toUpperCase()} Sale?`, "Charge this amount.", "Charge", window.doCheckout); };
 window.doCheckout = async () => { try { await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id, window.selectedPaymentMethod); window.showNotification("Sale Completed Successfully", "success"); window.cart=[]; window.renderCart(); window.router('bar'); } catch(e) { window.showNotification(e.message, "error"); } };
 
-// --- 9. APPROVALS MODULE (COMPLETE) ---
+// ============================================================================
+// 8. APPROVALS & STAFF (HIERARCHY RESTORED)
+// ============================================================================
 window.renderApprovals = async (c) => {
     if(window.profile.role === 'storekeeper' || window.profile.role === 'barman') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
     const reqs = await getPendingApprovals(window.profile.organization_id);
@@ -380,387 +522,208 @@ window.renderApprovals = async (c) => {
 window.confirmApprove = (id) => { window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Authorized", "success"); window.router('approvals'); }); };
 window.approveChange = (id) => { window.premiumConfirm("Approve Change?", "Execute this request.", "Approve", async () => { await supabase.rpc('process_change_request', { p_request_id: id, p_status: 'approved', p_reviewer_id: window.profile.id }); window.showNotification("Executed", "success"); window.router('approvals'); }); };
 
-// --- 10. REPORTS MODULE (COMPLETE) ---
-window.renderReports = async (c) => {
-    const isController = ['financial_controller', 'manager', 'overall_finance', 'deputy_manager', 'deputy_finance'].includes(window.profile.role);
-    const isVariance = window.currentRepView === 'variance';
-    if(isVariance) {
-        const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name, role, phone, id, assigned_location_id)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
-        c.innerHTML = `<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Reconciliation</h1><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button onclick="window.currentRepView='general'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">GENERAL</button><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">VARIANCE</button></div><button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-red-600 hover:bg-red-700">NEW COUNT</button></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead><tr class="bg-slate-50 border-b border-slate-100"><th class="p-4 text-xs text-slate-400 uppercase">Date</th><th class="text-xs text-slate-400 uppercase">Location</th><th class="text-xs text-slate-400 uppercase">Conducted By</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Report</th></tr></thead><tbody>${(takes||[]).map(t => `<tr><td class="p-4 text-xs font-bold text-slate-500">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs font-bold uppercase text-slate-800">${t.locations?.name}</td><td class="text-xs uppercase">${t.profiles?.full_name}</td><td class="text-right pr-6"><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px]">VIEW</button></td></tr>`).join('')}</tbody></table></div>`;
-    } else {
-        const { data: logs } = await supabase.from('transactions').select(`*, products (name, category), locations:to_location_id (name), from_loc:from_location_id (name), profiles:user_id (full_name, role, phone, id, assigned_location_id)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(500);
-        window.currentLogs = logs || [];
-        const { data: staff } = await supabase.from('profiles').select('id, full_name').eq('organization_id', window.profile.organization_id);
-        const { data: locs } = await supabase.from('locations').select('name').eq('organization_id', window.profile.organization_id);
-        
-        c.innerHTML = `
-        <div class="flex flex-col gap-6 mb-8">
-            <div class="flex justify-between items-center gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Reports</h1>${window.getCurrencySelectorHTML()}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">VARIANCE</button></div></div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200 flex flex-wrap items-end gap-4 shadow-sm">
-                <div><label class="input-label">Start</label><input type="date" id="repStart" class="input-field w-32" onchange="window.filterReport()"></div>
-                <div><label class="input-label">End</label><input type="date" id="repEnd" class="input-field w-32" onchange="window.filterReport()"></div>
-                <div class="flex-1"><label class="input-label">Type</label><select id="repType" class="input-field" onchange="window.filterReport()"><option value="all">All Types</option><option value="sale">Sales</option><option value="receive">Received Stock</option><option value="transfer">Transfers</option></select></div>
-                <div class="flex-1"><label class="input-label">Staff</label><select id="repStaff" class="input-field" onchange="window.filterReport()"><option value="all">All Staff</option>${staff.map(s=>`<option value="${s.id}">${s.full_name}</option>`).join('')}</select></div>
-                <div class="flex-1"><label class="input-label">Category</label><select id="repCat" class="input-field" onchange="window.filterReport()"><option value="all">All Categories</option><option value="Beverage">Beverage</option><option value="Food">Food</option><option value="Stationery">Stationery</option></select></div>
-                <div><label class="input-label">Status</label><select id="repStat" class="input-field w-32" onchange="window.filterReport()"><option value="all">All</option><option value="valid">Valid</option><option value="void">Void</option></select></div>
-                <button onclick="window.exportCSV()" class="btn-primary w-auto px-6 h-[46px] bg-green-700 hover:bg-green-800">EXPORT</button>
-            </div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Revenue</p><p class="text-4xl font-mono font-bold text-slate-900" id="repRev">...</p></div><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-mono font-bold text-green-600" id="repProf">...</p></div></div>
-        <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-4 pl-6 text-xs text-slate-400 uppercase tracking-widest">Date / Time</th><th class="text-xs text-slate-400 uppercase tracking-widest">Ref / Type</th><th class="text-xs text-slate-400 uppercase tracking-widest">Item / User</th><th class="text-xs text-slate-400 uppercase tracking-widest">Flow (From ➝ To)</th><th class="text-xs text-slate-400 uppercase tracking-widest">Detail</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right">Qty</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right">Amount</th>${isController?'<th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th>':''}</tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
-        window.filterReport();
-    }
-};
-window.filterReport = () => {
-    const start = document.getElementById('repStart')?.value;
-    const end = document.getElementById('repEnd')?.value;
-    const type = document.getElementById('repType')?.value;
-    const staff = document.getElementById('repStaff')?.value;
-    const cat = document.getElementById('repCat')?.value;
-    const stat = document.getElementById('repStat')?.value;
-
-    let f = window.currentLogs;
-    if(start) f = f.filter(l => new Date(l.created_at) >= new Date(start));
-    if(end) f = f.filter(l => new Date(l.created_at) <= new Date(end + 'T23:59:59'));
-    if(type && type !== 'all') f = f.filter(l => l.type === type);
-    if(staff && staff !== 'all') f = f.filter(l => l.user_id === staff);
-    if(cat && cat !== 'all') f = f.filter(l => l.products?.category === cat);
-    if(stat && stat !== 'all') f = f.filter(l => l.status === stat);
-    
-    const activeTx = f.filter(l => l.status !== 'void');
-    const totalSales = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
-    const totalProfit = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
-    document.getElementById('repRev').innerHTML = window.formatPrice(totalSales);
-    document.getElementById('repProf').innerHTML = window.formatPrice(totalProfit);
-
-    const b = document.getElementById('logsBody');
-    const isController = ['financial_controller', 'manager', 'overall_finance'].includes(window.profile.role);
-
-    b.innerHTML = f.map(l => {
-        const isVoid = l.status === 'void';
-        let actionColor='text-slate-800', detail='-', flow='-';
-        
-        if(l.type === 'sale') { 
-            actionColor='text-green-600'; 
-            detail=`PAID: ${(l.payment_method||'CASH').toUpperCase()}`;
-            flow = `${l.from_loc?.name || 'Store'} ➝ Client`;
-        }
-        else if(l.type === 'receive') { 
-            actionColor='text-blue-600'; 
-            detail=`LPO: ${l.reference || 'N/A'}`;
-            flow = `Supplier ➝ ${l.locations?.name}`;
-        }
-        else if(l.type === 'transfer') { 
-            actionColor='text-orange-600'; 
-            detail='INTERNAL MOVE';
-            flow = `${l.from_loc?.name} ➝ ${l.locations?.name}`;
-        }
-
-        return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition group ${isVoid ? 'bg-slate-50 opacity-50 grayscale' : ''}">
-            <td class="p-4 pl-6 text-xs font-bold text-slate-500 ${isVoid ? 'line-through' : ''}">${new Date(l.created_at).toLocaleDateString()}<br><span class="opacity-50">${new Date(l.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></td>
-            <td class="p-4 text-xs font-bold ${actionColor} uppercase ${isVoid ? 'line-through' : ''}">${l.type}<br><span class="text-slate-400 text-[9px]">${l.reference || ''}</span></td>
-            <td class="p-4 text-xs text-slate-600 font-medium ${isVoid ? 'line-through' : ''}"><div class="font-bold">${l.products?.name}</div><div class="text-[9px] text-slate-400">By: ${l.profiles?.full_name}</div></td>
-            <td class="p-4 text-xs font-mono text-slate-500 uppercase ${isVoid ? 'line-through' : ''}">${flow}</td>
-            <td class="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider ${isVoid ? 'line-through' : ''}">${detail}</td>
-            <td class="p-4 text-right font-mono text-sm font-bold text-slate-900 ${isVoid ? 'line-through' : ''}">${l.quantity}</td>
-            <td class="p-4 text-right font-mono text-sm font-bold text-slate-900 ${isVoid ? 'line-through' : ''}">${window.formatPrice(l.total_value)}</td>
-            ${isController && !isVoid ? `<td class="text-right pr-6"><button onclick="window.requestDeleteTransaction('${l.id}')" class="text-[9px] bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-100">VOID</button></td>` : isController ? `<td class="text-right pr-6"><span class="text-[9px] text-red-400 font-bold">VOIDED</span></td>` : ''}
-        </tr>`;
-    }).join('');
-};
-window.requestDeleteTransaction = async (id) => {
-    window.premiumConfirm("Request Void?", "Admin must approve.", "Send Request", async () => {
-        await supabase.from('change_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, target_table: 'transactions', target_id: id, action: 'VOID', status: 'pending' });
-        window.showNotification("Request Sent", "success");
-    });
-};
-window.exportCSV = () => { let rows=[["Date","Time","Action","Item","User","Flow","Detail","Status","Quantity","Value"]]; const f=window.currentLogs; f.forEach(l=>{ rows.push([new Date(l.created_at).toLocaleDateString(),new Date(l.created_at).toLocaleTimeString(),l.type,l.products?.name,l.profiles?.full_name,`${l.from_loc?.name||''}->${l.locations?.name||''}`,l.payment_method||'-',l.status||'valid',l.quantity,l.total_value||0]); }); let csvContent="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n"); let link=document.createElement("a"); link.setAttribute("href",encodeURI(csvContent)); link.setAttribute("download",`Report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); };
-window.confirmReceive = (id) => { window.premiumConfirm("Confirm Receipt", "Are you sure you have physically received these items?", "Receive Stock", () => window.receivePO(id)); };
-window.receivePO = async (id) => { const { error } = await supabase.rpc('receive_stock_wac', { p_po_id: id, p_user_id: window.profile.id, p_org_id: window.profile.organization_id }); if (error) window.showNotification(error.message, "error"); else { window.showNotification("Stock Received (WAC Updated)", "success"); window.router('inventory'); } };
-window.addStockModal = async () => { if(window.profile.role !== 'manager' && window.profile.role !== 'overall_storekeeper') return; const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Receive Stock</h3><div class="input-group"><label class="input-label">Item</label><select id="sP" class="input-field">${prods.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Store</label><select id="sL" class="input-field">${locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div><button onclick="window.execAddStock()" class="btn-primary">CONFIRM</button>`; document.getElementById('modal').style.display = 'flex'; };
-window.execAddStock = async () => { const pid = document.getElementById('sP').value, lid = document.getElementById('sL').value, qty = document.getElementById('sQ').value; if(qty <= 0) return; await supabase.rpc('add_stock_safe', { p_product_id: pid, p_location_id: lid, p_quantity: qty, p_org_id: window.profile.organization_id }); await supabase.from('transactions').insert({ organization_id: window.profile.organization_id, user_id: window.profile.id, product_id: pid, to_location_id: lid, type: 'receive', quantity: qty }); document.getElementById('modal').style.display = 'none'; window.showNotification("Stock Added", "success"); window.router('inventory'); };
-window.issueModal = async (name, id, fromLoc) => { window.selectedDestinationId = null; const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).neq('id', fromLoc); const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Move: ${name}</h3><div class="grid grid-cols-2 gap-2 mb-4 max-h-40 overflow-y-auto">${html}</div><div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div><button onclick="window.execIssue('${id}', '${fromLoc}')" class="btn-primary">TRANSFER</button>`; document.getElementById('modal').style.display = 'flex'; };
-window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white')); el.classList.add('bg-slate-900', 'text-white'); window.selectedDestinationId = id; };
-window.execIssue = async (pid, fromLoc) => { const qty = document.getElementById('tQty').value; if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error"); try { await transferStock(pid, fromLoc, window.selectedDestinationId, qty, window.profile.id, window.profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Request Sent", "success"); } catch(e) { window.showNotification(e.message, "error"); } };
-window.newStockTakeModal = async () => { const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Stock Take</h3><div class="input-group"><label class="input-label">Location</label><select id="stLoc" class="input-field">${locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select></div><button onclick="window.startStockTake()" class="btn-primary">START</button>`; document.getElementById('modal').style.display = 'flex'; };
-window.startStockTake = async () => { const locId = document.getElementById('stLoc').value; const inv = await getInventory(window.profile.organization_id); const items = inv.filter(x => x.location_id === locId); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Count Items</h3><div class="bg-slate-50 p-2 rounded max-h-60 overflow-y-auto mb-4 border">${items.map(i => `<div class="flex justify-between items-center mb-2"><span class="text-xs font-bold w-1/2">${i.products.name}</span><input type="number" class="st-input w-20 border rounded p-1 text-center font-bold text-slate-900" data-id="${i.product_id}" data-sys="${i.quantity}" placeholder="Count"></div>`).join('')}</div><button onclick="window.saveStockTake('${locId}')" class="btn-primary">SUBMIT VARIANCE</button>`; };
-window.saveStockTake = async (locId) => { const inputs = document.querySelectorAll('.st-input'); const { data: st } = await supabase.from('stock_takes').insert({ organization_id: window.profile.organization_id, location_id: locId, conducted_by: window.profile.id, status: 'Completed' }).select().single(); const items = Array.from(inputs).map(i => ({ stock_take_id: st.id, product_id: i.getAttribute('data-id'), system_qty: i.getAttribute('data-sys'), physical_qty: i.value || 0 })); await supabase.from('stock_take_items').insert(items); document.getElementById('modal').style.display = 'none'; window.showNotification("Audit Complete", "success"); window.currentRepView = 'variance'; window.router('reports'); };
-window.viewVariance = async (id) => { const { data: items } = await supabase.from('stock_take_items').select('*, products(name)').eq('stock_take_id', id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Variance Report</h3><table class="w-full text-xs text-left border"><thead><tr class="bg-slate-100"><th>Item</th><th>Sys</th><th>Phys</th><th>Var</th></tr></thead><tbody>${items.map(i => `<tr><td class="p-2 font-bold">${i.products.name}</td><td>${i.system_qty}</td><td>${i.physical_qty}</td><td class="${i.variance<0?'text-red-600 font-bold':''}">${i.variance}</td></tr>`).join('')}</tbody></table>`; document.getElementById('modal').style.display = 'flex'; };
-
-// --- 11. STAFF MODULE (COMPLETE) ---
 window.renderStaff = async (c) => {
-    // Permission Check
-    if(!['manager', 'financial_controller'].includes(window.profile.role)) {
-        return c.innerHTML = '<div class="flex h-full items-center justify-center text-slate-400 font-bold uppercase tracking-widest">Access Restricted</div>';
-    }
-
-    const [staffRes, inviteRes, locsRes] = await Promise.all([
+    if(!['manager', 'financial_controller'].includes(window.profile.role)) return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Access Restricted</div>';
+    const [staff, invites] = await Promise.all([
         supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id),
-        supabase.from('staff_invites').select('*, locations(name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending'),
-        supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id)
+        supabase.from('staff_invites').select('*, locations(name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending')
     ]);
-
-    const staff = staffRes.data || [];
-    const invites = inviteRes.data || [];
-    window.tempLocs = locsRes.data || [];
-
     c.innerHTML = `
-    <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-8">
-        <div>
-            <h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Staff Management</h1>
-            <p class="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Total Users: ${staff.length}</p>
-        </div>
-        <button onclick="window.inviteModal()" class="btn-primary w-auto px-6 shadow-lg bg-slate-900 text-white">+ NEW USER</button>
-    </div>
-
-    <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden mb-8">
+    <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
+    <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8">
         <table class="w-full text-left">
-            <thead class="bg-slate-50 border-b border-slate-100">
-                <tr>
-                    <th class="p-4 text-[10px] uppercase text-slate-400">User</th>
-                    <th class="text-[10px] uppercase text-slate-400">Role</th>
-                    <th class="text-[10px] uppercase text-slate-400">Location</th>
-                    <th class="text-[10px] uppercase text-slate-400">Status</th>
-                    <th class="text-[10px] uppercase text-slate-400 text-right pr-6">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${staff.map(s => {
-                    const isMe = s.id === window.profile.id;
-                    return `
-                    <tr class="border-b last:border-0 hover:bg-slate-50 transition group">
-                        <td class="p-4">
-                            <div class="font-bold text-slate-700 text-sm">${s.full_name || 'Pending Setup'}</div>
-                            <div class="text-[10px] text-slate-400 font-mono">${s.email}</div>
-                        </td>
-                        <td class="p-4 text-xs font-bold text-slate-600 uppercase">${s.role.replace('_', ' ')}</td>
-                        <td class="p-4 text-xs text-slate-500 uppercase">${s.locations?.name || 'Global Access'}</td>
-                        <td class="p-4">
-                            <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${s.status==='active'?'text-green-600 bg-green-50':'text-red-600 bg-red-50'}">${s.status}</span>
-                        </td>
-                        <td class="p-4 text-right pr-6">
-                            ${!isMe ? `
-                            <div class="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onclick="window.viewStaffDetails('${s.id}')" class="p-2 hover:bg-white text-slate-400 hover:text-blue-600 rounded transition" title="Activity Logs">👁️</button>
-                                <button onclick="window.reassignModal('${s.id}', '${s.full_name}')" class="p-2 hover:bg-white text-slate-400 hover:text-orange-500 rounded transition" title="Reassign">📍</button>
-                                <button onclick="window.toggleSuspend('${s.id}', '${s.status}')" class="p-2 hover:bg-white text-slate-400 ${s.status==='active'?'hover:text-red-600':'hover:text-green-600'} rounded transition" title="${s.status==='active'?'Suspend':'Activate'}">${s.status==='active'?'🚫':'✅'}</button>
-                            </div>` : '<span class="text-[10px] text-slate-300 font-bold">YOU</span>'}
-                        </td>
-                    </tr>`;
-                }).join('')}
+            <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead>
+            <tbody>${staff.data.map(s => `
+                <tr class="border-b last:border-0 hover:bg-slate-50 transition">
+                    <td class="p-4 font-bold text-slate-700">${s.full_name}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td>
+                    <td class="text-xs uppercase">${s.role.replace('_', ' ')}</td>
+                    <td class="text-xs uppercase">${s.locations?.name || 'Global'}</td>
+                    <td class="text-right pr-6 flex justify-end gap-2 mt-3">
+                        <button onclick="window.viewStaffDetails('${s.id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">LOGS</button>
+                        <button onclick="window.reassignModal('${s.id}', '${s.full_name}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">MOVE</button>
+                        <button onclick="window.toggleSuspend('${s.id}', '${s.status}')" class="text-[10px] border px-2 py-1 rounded ${s.status==='active'?'text-red-500 hover:bg-red-50':'text-green-500 hover:bg-green-50'}">${s.status==='active'?'SUSPEND':'ACTIVATE'}</button>
+                    </td>
+                </tr>`).join('')}
             </tbody>
         </table>
-    </div>
-
-    ${invites.length > 0 ? `
-    <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Pending Invites</h3>
-    <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden">
-        <table class="w-full text-left">
-            <tbody>
-                ${invites.map(i => `
-                    <tr class="border-b last:border-0 hover:bg-slate-50">
-                        <td class="p-4 font-mono text-xs text-slate-600">${i.email}</td>
-                        <td class="p-4 text-xs font-bold text-slate-500 uppercase">${i.role}</td>
-                        <td class="p-4 text-xs text-slate-400">Assigned: ${i.locations?.name || 'All'}</td>
-                        <td class="p-4 text-right pr-6">
-                            <button onclick="window.cancelInvite('${i.id}')" class="text-[10px] font-bold text-red-400 hover:text-red-600">CANCEL</button>
-                        </td>
-                    </tr>`).join('')}
-            </tbody>
-        </table>
-    </div>` : ''}
-    `;
+    </div>`;
 };
 
 window.inviteModal = () => {
+    // Logic: If role is FC or Manager, they can invite Global roles (No Location)
     const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-6 uppercase text-center">Invite Staff</h3>
         <div class="input-group"><label class="input-label">Email</label><input id="iE" type="email" class="input-field"></div>
         <div class="grid grid-cols-2 gap-4 mb-4">
             <div class="input-group mb-0"><label class="input-label">Role</label>
-                <select id="iR" class="input-field">
+                <select id="iR" class="input-field" onchange="window.toggleLocSelect(this.value)">
                     <option value="storekeeper">Storekeeper</option>
                     <option value="deputy_storekeeper">Deputy Storekeeper</option>
                     <option value="barman">Barman</option>
                     <option value="finance">Finance</option>
                     <option value="deputy_finance">Deputy Finance</option>
-                    <option value="financial_controller">Controller</option>
+                    <option value="financial_controller">Financial Controller (Global)</option>
+                    <option value="deputy_manager">Deputy Manager</option>
                 </select>
             </div>
-            <div class="input-group mb-0"><label class="input-label">Assign To</label>
-                <select id="iL" class="input-field">${locOpts}</select>
-            </div>
+            <div class="input-group mb-0" id="locDiv"><label class="input-label">Assign To</label><select id="iL" class="input-field">${locOpts}</select></div>
         </div>
-        <button onclick="window.execInvite()" class="btn-primary">SEND INVITE</button>
-    `;
+        <button onclick="window.execInvite()" class="btn-primary">SEND INVITE</button>`;
     document.getElementById('modal').style.display = 'flex';
+};
+
+window.toggleLocSelect = (role) => {
+    // FC has no location assignment
+    const div = document.getElementById('locDiv');
+    if (role === 'financial_controller') div.style.display = 'none';
+    else div.style.display = 'block';
 };
 
 window.execInvite = async () => {
     const email = document.getElementById('iE').value;
+    const role = document.getElementById('iR').value;
+    const loc = role === 'financial_controller' ? null : document.getElementById('iL').value;
+    
     if(!email) return;
     await supabase.from('staff_invites').insert({
         organization_id: window.profile.organization_id,
-        email, role: document.getElementById('iR').value,
-        assigned_location_id: document.getElementById('iL').value,
-        status: 'pending'
+        email, role, assigned_location_id: loc, status: 'pending'
     });
     document.getElementById('modal').style.display = 'none';
     window.showNotification("Invite Sent", "success");
     window.renderStaff(document.getElementById('app-view'));
 };
 
-window.viewStaffDetails = async (id) => {
-    const [logs, p] = await Promise.all([
-        supabase.from('audit_logs').select('*').eq('user_id', id).order('created_at', {ascending: false}).limit(5),
-        supabase.from('profiles').select('*').eq('id', id).single()
-    ]);
+// Staff Action Helpers
+window.viewStaffDetails = async (id) => { const [l,p] = await Promise.all([supabase.from('audit_logs').select('*').eq('user_id', id).limit(5), supabase.from('profiles').select('*').eq('id', id).single()]); document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">${p.data.full_name}</h3><div class="bg-slate-50 p-4 rounded">${l.data.map(x=>`<div>${x.action}</div>`).join('')}</div>`; document.getElementById('modal').style.display='flex'; };
+window.reassignModal = (id, n) => { const opts=window.cachedLocations.map(l=>`<option value="${l.id}">${l.name}</option>`).join(''); document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">Move ${n}</h3><select id="nLoc" class="input-field mb-4">${opts}</select><button onclick="window.doReassign('${id}')" class="btn-primary">MOVE</button>`; document.getElementById('modal').style.display='flex'; };
+window.doReassign = async (id) => { await supabase.from('profiles').update({assigned_location_id:document.getElementById('nLoc').value}).eq('id',id); document.getElementById('modal').style.display='none'; window.renderStaff(document.getElementById('app-view')); };
+window.toggleSuspend = async (id, s) => { await supabase.from('profiles').update({status: s==='active'?'suspended':'active'}).eq('id', id); window.renderStaff(document.getElementById('app-view')); };
+window.cancelInvite = async (id) => { await supabase.from('staff_invites').delete().eq('id',id); window.renderStaff(document.getElementById('app-view')); };
+
+// ============================================================================
+// 9. REPORTS & SETTINGS (COMPLETE)
+// ============================================================================
+window.renderReports = async (c) => {
+    const isController = ['financial_controller', 'manager', 'overall_finance'].includes(window.profile.role);
+    const isVariance = window.currentRepView === 'variance';
     
-    const logData = logs.data || [];
-    const prof = p.data;
-    const logHtml = logData.length ? logData.map(l => `<div class="text-[10px] border-b py-2"><span class="font-bold">${l.action}</span> - ${new Date(l.created_at).toLocaleString()}</div>`).join('') : '<span class="text-xs text-slate-400">No logs.</span>';
-
-    document.getElementById('modal-content').innerHTML = `
-        <div class="text-center mb-4">
-            <h3 class="font-bold text-lg">${prof.full_name}</h3>
-            <p class="text-xs text-slate-500">${prof.email} | ${prof.phone || 'No Phone'}</p>
+    if(isVariance) {
+        const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
+        c.innerHTML = `<div class="flex justify-between mb-8"><h1 class="text-3xl font-bold">Reconciliation</h1><div class="flex gap-2"><button onclick="window.currentRepView='general';window.router('reports')" class="px-4 py-2 border rounded">General</button><button class="px-4 py-2 bg-slate-900 text-white rounded">Variance</button></div><button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-4">NEW AUDIT</button></div><table class="w-full text-left"><thead><tr class="bg-slate-50"><th class="p-4">Date</th><th>Location</th><th>Auditor</th><th>Action</th></tr></thead><tbody>${takes.map(t=>`<tr><td class="p-4">${new Date(t.created_at).toLocaleDateString()}</td><td>${t.locations?.name}</td><td>${t.profiles?.full_name}</td><td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold">VIEW</button></td></tr>`).join('')}</tbody></table>`;
+    } else {
+        // General Report Logic
+        const { data: logs } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(500);
+        window.currentLogs = logs || [];
+        c.innerHTML = `
+        <div class="flex flex-col gap-6 mb-8">
+            <div class="flex justify-between items-center"><h1 class="text-3xl font-bold">Reports</h1><div class="flex gap-2"><button class="px-4 py-2 bg-slate-900 text-white rounded">General</button><button onclick="window.currentRepView='variance';window.router('reports')" class="px-4 py-2 border rounded">Variance</button></div></div>
+            <div class="bg-white p-4 rounded-xl border flex gap-4 flex-wrap">
+                <input type="date" id="rStart" class="input-field w-32" onchange="window.filterReport()">
+                <input type="date" id="rEnd" class="input-field w-32" onchange="window.filterReport()">
+                <select id="rType" class="input-field w-40" onchange="window.filterReport()"><option value="all">All Types</option><option value="sale">Sales</option><option value="receive">Received</option><option value="transfer">Transfers</option></select>
+                <button onclick="window.exportCSV()" class="btn-primary w-auto px-4 bg-green-600">EXPORT CSV</button>
+            </div>
         </div>
-        <h4 class="text-xs font-bold uppercase text-slate-400 mb-2">Recent Activity</h4>
-        <div class="bg-slate-50 p-4 rounded-xl border mb-4">${logHtml}</div>
-    `;
-    document.getElementById('modal').style.display = 'flex';
+        <div class="bg-white rounded-xl border overflow-hidden"><table class="w-full text-left"><thead class="bg-slate-50"><tr><th class="p-4">Date</th><th>Type</th><th>Item</th><th>Flow</th><th>Detail</th><th class="text-right">Qty</th><th class="text-right">Value</th>${isController?'<th>Action</th>':''}</tr></thead><tbody id="logsBody"></tbody></table></div>`;
+        window.filterReport();
+    }
 };
 
-window.reassignModal = (id, name) => {
-    const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
-    document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-2 text-center">Move ${name}</h3>
-        <div class="input-group"><label class="input-label">New Location</label><select id="nL" class="input-field">${locOpts}</select></div>
-        <button onclick="window.doReassign('${id}')" class="btn-primary">CONFIRM</button>
-    `;
-    document.getElementById('modal').style.display = 'flex';
+window.filterReport = () => {
+    const start = document.getElementById('rStart')?.value;
+    const end = document.getElementById('rEnd')?.value;
+    const type = document.getElementById('rType')?.value;
+    let f = window.currentLogs;
+    if(start) f = f.filter(l => new Date(l.created_at) >= new Date(start));
+    if(end) f = f.filter(l => new Date(l.created_at) <= new Date(end));
+    if(type && type !== 'all') f = f.filter(l => l.type === type);
+    
+    const isController = ['financial_controller', 'manager'].includes(window.profile.role);
+    document.getElementById('logsBody').innerHTML = f.map(l => `
+        <tr class="border-b hover:bg-slate-50 ${l.status==='void'?'opacity-50 line-through':''}">
+            <td class="p-4 text-xs font-bold text-slate-500">${new Date(l.created_at).toLocaleDateString()}</td>
+            <td class="text-xs font-bold uppercase">${l.type}</td>
+            <td class="text-xs">${l.products?.name}</td>
+            <td class="text-xs text-slate-500">${l.from_loc?.name||'-'} -> ${l.locations?.name}</td>
+            <td class="text-[10px] font-bold">${l.payment_method || l.reference || '-'}</td>
+            <td class="text-right font-mono text-sm">${l.quantity}</td>
+            <td class="text-right font-mono text-sm font-bold">${window.formatPrice(l.total_value)}</td>
+            ${isController && l.status!=='void' ? `<td><button onclick="window.requestDeleteTransaction('${l.id}')" class="text-[9px] text-red-600 border border-red-200 px-2 rounded">VOID</button></td>` : '<td></td>'}
+        </tr>`).join('');
 };
 
-window.doReassign = async (id) => {
-    await supabase.from('profiles').update({ assigned_location_id: document.getElementById('nL').value }).eq('id', id);
-    document.getElementById('modal').style.display = 'none';
-    window.showNotification("Reassigned", "success");
-    window.renderStaff(document.getElementById('app-view'));
-};
-
-window.toggleSuspend = async (id, status) => {
-    const newStat = status === 'active' ? 'suspended' : 'active';
-    await supabase.from('profiles').update({ status: newStat }).eq('id', id);
-    window.showNotification("Status Updated", "success");
-    window.renderStaff(document.getElementById('app-view'));
-};
-
-window.cancelInvite = async (id) => {
-    await supabase.from('staff_invites').delete().eq('id', id);
-    window.showNotification("Cancelled", "success");
-    window.renderStaff(document.getElementById('app-view'));
-};
-
-// --- 12. SETTINGS MODULE (COMPLETE) ---
 window.renderSettings = async (c) => {
-    // Refresh cache to ensure we have latest
     const [l, s] = await Promise.all([
         supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
         supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
     ]);
-    window.cachedLocations = l.data || [];
-    window.cachedSuppliers = s.data || [];
-
     const rateRows = ALL_CURRENCIES.map(code => {
-        const isBase = code === window.baseCurrency;
-        const val = isBase ? 1 : (window.currencyRates[code] || '');
-        return `<div class="flex justify-between items-center py-2 border-b last:border-0"><span class="font-bold text-xs w-10">${code}</span>${isBase ? '<span class="text-xs font-mono font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded">BASE</span>' : `<input id="rate-${code}" type="number" step="0.01" value="${val}" class="w-24 input-field py-1 text-right font-mono text-xs" placeholder="Rate">`}</div>`;
+        const val = code === window.baseCurrency ? 1 : (window.currencyRates[code] || '');
+        return `<div class="flex justify-between py-2 border-b"><span class="font-bold text-xs w-10">${code}</span><input id="rate-${code}" type="number" step="0.01" value="${val}" class="w-24 input-field py-1 text-right text-xs" placeholder="Rate"></div>`;
     }).join('');
 
     c.innerHTML = `
-    <h1 class="text-3xl font-bold uppercase text-slate-900 mb-8">Settings</h1>
+    <h1 class="text-3xl font-bold mb-8">Settings</h1>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div class="space-y-8">
-            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ ADD</button></div>
-                <table class="w-full text-left"><tbody>${window.cachedLocations.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type.replace('_', ' ')}</td></tr>`).join('')}</tbody></table>
-            </div>
-            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Suppliers</h3><button onclick="window.openSupplierModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ NEW</button></div>
-                <table class="w-full text-left"><tbody>${window.cachedSuppliers.map(s => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${s.name}</td><td class="text-xs text-slate-400 font-mono text-right">${s.tin || '-'}</td></tr>`).join('')}</tbody></table>
-            </div>
+        <div>
+            <div class="flex justify-between mb-4"><h3 class="font-bold">Locations</h3><button onclick="window.addStoreModal()" class="text-xs bg-slate-900 text-white px-3 py-1 rounded">+ ADD</button></div>
+            <div class="bg-white rounded border p-4">${l.data.map(x=>`<div class="border-b py-2 flex justify-between"><span>${x.name}</span><span class="text-xs text-slate-400">${x.type}</span></div>`).join('')}</div>
+            <div class="flex justify-between mb-4 mt-8"><h3 class="font-bold">Suppliers</h3><button onclick="window.openSupplierModal()" class="text-xs bg-slate-900 text-white px-3 py-1 rounded">+ ADD</button></div>
+            <div class="bg-white rounded border p-4">${s.data.map(x=>`<div class="border-b py-2 flex justify-between"><span>${x.name}</span><span class="text-xs text-slate-400">${x.tin || '-'}</span></div>`).join('')}</div>
         </div>
-        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-            <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
-            <div class="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">${rateRows}</div>
-            <button onclick="window.saveRates()" class="btn-primary mt-6">UPDATE RATES</button>
+        <div class="bg-white rounded border p-6">
+            <h3 class="font-bold mb-4">Exchange Rates</h3>
+            <div class="max-h-[400px] overflow-y-auto">${rateRows}</div>
+            <button onclick="window.saveRates()" class="btn-primary mt-4">UPDATE RATES</button>
         </div>
     </div>`;
 };
 
+// --- SETTINGS MODALS ---
 window.addStoreModal = () => {
-    // Generate Parent Options
     const parents = window.cachedLocations.filter(l => l.type !== 'department').map(l => `<option value="${l.id}">${l.name}</option>`).join('');
-    
     document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-6 uppercase text-center">Add Location</h3>
-        <div class="input-group"><label class="input-label">Location Name</label><input id="locName" class="input-field uppercase"></div>
-        <div class="input-group"><label class="input-label">Type</label>
-            <select id="locType" class="input-field" onchange="document.getElementById('parentGrp').style.display = this.value === 'main_store' ? 'none' : 'block'">
-                <option value="sub_store">Camp / Sub-Store</option>
-                <option value="department">Department (Bar/Kitchen)</option>
-                <option value="main_store">Main Store (HQ)</option>
-            </select>
-        </div>
-        <div id="parentGrp" class="input-group">
-            <label class="input-label">Parent Store (Linked To)</label>
-            <select id="locParent" class="input-field">${parents}</select>
-        </div>
-        <button onclick="window.execAddStore()" class="btn-primary">CREATE LOCATION</button>
-    `;
+        <h3 class="font-bold text-lg mb-4 text-center">Add Location</h3>
+        <div class="input-group"><label class="input-label">Name</label><input id="lN" class="input-field uppercase"></div>
+        <div class="input-group"><label class="input-label">Type</label><select id="lT" class="input-field" onchange="document.getElementById('pG').style.display=this.value==='main_store'?'none':'block'"><option value="sub_store">Camp / Sub-Store</option><option value="department">Department</option><option value="main_store">Main Store (HQ)</option></select></div>
+        <div id="pG" class="input-group"><label class="input-label">Parent</label><select id="lP" class="input-field">${parents}</select></div>
+        <button onclick="window.execAddStore()" class="btn-primary">CREATE</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
-
 window.execAddStore = async () => {
-    const name = document.getElementById('locName').value;
-    const type = document.getElementById('locType').value;
-    const parent = type === 'main_store' ? null : document.getElementById('locParent').value;
-    
-    if(!name) return;
-
-    await supabase.from('locations').insert({ 
-        organization_id: window.profile.organization_id, 
-        name, type, parent_location_id: parent 
-    });
-    
-    document.getElementById('modal').style.display = 'none';
-    window.showNotification("Location Created", "success");
-    window.router('settings');
+    const n = document.getElementById('lN').value, t = document.getElementById('lT').value, p = t==='main_store'?null:document.getElementById('lP').value;
+    if(!n) return;
+    await supabase.from('locations').insert({organization_id:window.profile.organization_id, name:n, type:t, parent_location_id:p});
+    document.getElementById('modal').style.display='none'; window.router('settings');
 };
-
 window.openSupplierModal = () => {
-    document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-6 uppercase text-center">New Supplier</h3>
-        <div class="input-group"><label class="input-label">Company Name</label><input id="sN" class="input-field uppercase"></div>
-        <div class="input-group"><label class="input-label">TIN Number</label><input id="sT" class="input-field"></div>
-        <div class="input-group"><label class="input-label">Phone Contact</label><input id="sP" class="input-field"></div>
-        <div class="input-group"><label class="input-label">Physical Address</label><input id="sA" class="input-field" placeholder="e.g. Kariakoo, Mtaa wa Congo"></div>
-        <button onclick="window.execAddSupplier()" class="btn-primary">SAVE SUPPLIER</button>`;
-    document.getElementById('modal').style.display = 'flex';
+    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 text-center">New Supplier</h3><div class="input-group"><label>Name</label><input id="sN" class="input-field"></div><div class="input-group"><label>TIN</label><input id="sT" class="input-field"></div><div class="input-group"><label>Phone</label><input id="sP" class="input-field"></div><div class="input-group"><label>Address</label><input id="sA" class="input-field"></div><button onclick="window.execAddSupplier()" class="btn-primary">SAVE</button>`;
+    document.getElementById('modal').style.display='flex';
+};
+window.execAddSupplier = async () => {
+    const n=document.getElementById('sN').value; if(!n) return;
+    await supabase.from('suppliers').insert({organization_id:window.profile.organization_id, name:n, tin:document.getElementById('sT').value, contact:document.getElementById('sP').value, address:document.getElementById('sA').value});
+    document.getElementById('modal').style.display='none'; window.router('settings');
 };
 
-window.execAddSupplier = async () => {
-    const name = document.getElementById('sN').value;
-    if(!name) return;
-    await supabase.from('suppliers').insert({ 
-        organization_id: window.profile.organization_id, 
-        name, 
-        tin: document.getElementById('sT').value,
-        contact: document.getElementById('sP').value,
-        address: document.getElementById('sA').value // Captured
-    });
-    document.getElementById('modal').style.display = 'none';
-    window.showNotification("Supplier Saved", "success");
-    window.router('settings');
+// --- MISC ACTIONS ---
+window.issueModal = async (name, id, fromLoc) => { 
+    window.selectedDestinationId = null; 
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).neq('id', fromLoc); 
+    const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join(''); 
+    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Move: ${name}</h3><div class="grid grid-cols-2 gap-2 mb-4 max-h-40 overflow-y-auto">${html}</div><div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div><button onclick="window.execIssue('${id}', '${fromLoc}')" class="btn-primary">TRANSFER</button>`; 
+    document.getElementById('modal').style.display = 'flex'; 
 };
+window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white')); el.classList.add('bg-slate-900', 'text-white'); window.selectedDestinationId = id; };
+window.execIssue = async (pid, fromLoc) => { const qty = document.getElementById('tQty').value; if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error"); try { await transferStock(pid, fromLoc, window.selectedDestinationId, qty, window.profile.id, window.profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Request Sent", "success"); } catch(e) { window.showNotification(e.message, "error"); } };
+window.requestDeleteTransaction = async (id) => { window.premiumConfirm("Void Transaction?", "This requires approval.", "Request", async () => { await supabase.from('change_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, target_table: 'transactions', target_id: id, action: 'VOID', status: 'pending' }); window.showNotification("Sent", "success"); }); };
+window.requestDeleteProduct = async (id) => { window.premiumConfirm("Delete Product?", "Approval required.", "Request", async () => { await supabase.from('change_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, target_table: 'products', target_id: id, action: 'DELETE_PRODUCT', status: 'pending' }); window.showNotification("Sent", "success"); }); };
+window.openStockEdit = (id, q) => { document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">Edit Stock</h3><input id="newQ" type="number" class="input-field mb-4" value="${q}"><textarea id="newR" class="input-field" placeholder="Reason"></textarea><button onclick="window.execStockEdit('${id}')" class="btn-primary mt-4">SUBMIT</button>`; document.getElementById('modal').style.display='flex'; };
+window.execStockEdit = async (id) => { await supabase.from('change_requests').insert({organization_id:window.profile.organization_id, requester_id:window.profile.id, target_table:'inventory', target_id:id, action:'EDIT_INVENTORY', new_data:{new_qty:document.getElementById('newQ').value, reason:document.getElementById('newR').value}, status:'pending'}); document.getElementById('modal').style.display='none'; window.showNotification("Request Sent", "success"); };
+window.exportCSV = () => { let rows=[["Date","Type","Item","Flow","Detail","Qty","Value"]]; window.currentLogs.forEach(l=>{ rows.push([new Date(l.created_at).toLocaleDateString(),l.type,l.products?.name,`${l.from_loc?.name||''}->${l.locations?.name||''}`,l.payment_method||'-',l.quantity,l.total_value]); }); let c="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n"); let link=document.createElement("a"); link.href=encodeURI(c); link.download="report.csv"; link.click(); };
+window.newStockTakeModal = async () => { const locs = window.cachedLocations; document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">New Audit</h3><select id="stLoc" class="input-field mb-4">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select><button onclick="window.startStockTake()" class="btn-primary">START</button>`; document.getElementById('modal').style.display='flex'; };
+window.startStockTake = async () => { const lid = document.getElementById('stLoc').value; const inv = await getInventory(window.profile.organization_id); const items = inv.filter(x=>x.location_id===lid); document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">Counting...</h3><div class="max-h-60 overflow-y-auto mb-4">${items.map(i=>`<div class="flex justify-between mb-2"><span class="w-1/2 text-xs">${i.products.name}</span><input type="number" class="st-input border w-20 text-center" data-id="${i.product_id}" data-sys="${i.quantity}"></div>`).join('')}</div><button onclick="window.saveStockTake('${lid}')" class="btn-primary">FINISH</button>`; };
+window.saveStockTake = async (lid) => { const inps = document.querySelectorAll('.st-input'); const {data:st}=await supabase.from('stock_takes').insert({organization_id:window.profile.organization_id, location_id:lid, conducted_by:window.profile.id, status:'Completed'}).select().single(); const items=Array.from(inps).map(i=>({stock_take_id:st.id, product_id:i.dataset.id, system_qty:i.dataset.sys, physical_qty:i.value||0})); await supabase.from('stock_take_items').insert(items); document.getElementById('modal').style.display='none'; window.router('reports'); };
+window.viewVariance = async (id) => { const {data:i}=await supabase.from('stock_take_items').select('*, products(name)').eq('stock_take_id',id); document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">Variance</h3><div class="max-h-60 overflow-y-auto"><table class="w-full text-xs"><thead><tr><th>Item</th><th>Sys</th><th>Phys</th><th>Var</th></tr></thead><tbody>${i.map(x=>`<tr><td>${x.products.name}</td><td>${x.system_qty}</td><td>${x.physical_qty}</td><td class="${x.variance<0?'text-red-500':''}">${x.variance}</td></tr>`).join('')}</tbody></table></div>`; document.getElementById('modal').style.display='flex'; };
