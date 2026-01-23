@@ -1,5 +1,5 @@
 import { getSession, logout } from './auth.js';
-import { getInventory, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
+import { getInventory, createLocation, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
 // --- CONFIG ---
@@ -63,13 +63,14 @@ window.onload = async () => {
             prof = retry.data; 
         }
         
-        // Setup Check: If no Organization, Show Modal and STOP here.
+        // If profile exists but no organization, show setup modal
         if (!prof || !prof.organization_id) { 
             document.getElementById('name-modal').style.display = 'flex';
+            // Pre-fill if auth metadata exists
             if(session.user.user_metadata?.full_name) {
                 document.getElementById('userNameInput').value = session.user.user_metadata.full_name;
             }
-            return; // 🛑 STOP EXECUTION HERE UNTIL SETUP DONE
+            return; 
         }
 
         if (prof.status === 'suspended') { await logout(); alert("Account Suspended. Contact Financial Controller."); return; }
@@ -127,9 +128,7 @@ window.saveName = async () => {
     if (!orgName) return window.showNotification("Company Name Required", "error");
     if (!name) return window.showNotification("Full Name Required", "error");
 
-    console.log("Attempting RPC Setup with:", { org_name: orgName, user_name: name, user_phone: phone });
-
-    // 🔥 FIX: Parameters match SQL Function (org_name, user_name, user_phone)
+    // 🔥 FIX: USING RPC TO BYPASS RLS
     const { data, error } = await supabase.rpc('create_new_organization', {
         org_name: orgName,
         user_name: name,
@@ -143,9 +142,7 @@ window.saveName = async () => {
 
     document.getElementById('name-modal').style.display = 'none';
     window.showNotification("Workspace Created Successfully", "success");
-    
-    // Refresh page to load new profile data
-    setTimeout(() => location.reload(), 1000); 
+    location.reload(); 
 };
 
 window.initCurrency = async () => { if (!window.profile) return; try { const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single(); window.baseCurrency = org?.base_currency || 'TZS'; const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id); window.currencyRates = {}; window.currencyRates[window.baseCurrency] = 1; (rates||[]).forEach(r => window.currencyRates[r.currency_code] = Number(r.rate)); } catch(e){} };
@@ -262,12 +259,10 @@ window.addProductModal = () => {
 };
 
 window.nextProductStep = async () => {
-    // Validate Step 1
     const name = document.getElementById('pN').value.toUpperCase();
     const cost = parseFloat(document.getElementById('pC').value);
     if(!name || isNaN(cost)) return window.showNotification("Invalid Input", "error");
 
-    // Save temp data
     window.tempProductData = {
         name, 
         category: document.getElementById('pCat').value,
@@ -278,7 +273,6 @@ window.nextProductStep = async () => {
         selling: parseFloat(document.getElementById('pS').value)
     };
 
-    // Load Locations for Pricing
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department'); // Only selling points
     const list = document.getElementById('price-list');
     
@@ -303,7 +297,6 @@ window.finalizeProduct = async () => {
     const costBase = window.convertAmount(d.cost, d.currency, window.baseCurrency);
     const sellingBase = window.convertAmount(d.selling, d.currency, window.baseCurrency);
 
-    // 1. Insert Product
     const { data: prod, error } = await supabase.from('products').insert({
         name: d.name, category: d.category, unit: d.unit, 
         conversion_factor: d.conversion_factor, cost_price: costBase, 
@@ -312,7 +305,6 @@ window.finalizeProduct = async () => {
 
     if(error) return window.showNotification(error.message, "error");
 
-    // 2. Insert Location Prices
     const priceInputs = document.querySelectorAll('.loc-price-input');
     const prices = [];
     priceInputs.forEach(i => {
