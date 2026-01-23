@@ -2,7 +2,7 @@ import { getSession, logout } from './auth.js';
 import { getInventory, processBarSale, getPendingApprovals, respondToApproval, transferStock } from './services.js';
 import { supabase } from './supabase.js';
 
-// --- CONFIGURATION ---
+// --- GLOBAL CONFIGURATION ---
 window.profile = null;
 window.currentLogs = [];
 window.cart = [];
@@ -10,24 +10,39 @@ window.baseCurrency = 'TZS';
 window.currencyRates = {};
 window.selectedCurrency = 'TZS';
 window.activePosLocationId = null;
-window.cachedLocations = []; // Muhimu kwa Location Pricing
+window.cachedLocations = []; 
 window.cachedSuppliers = [];
 window.selectedPaymentMethod = 'cash'; 
-window.tempProductData = null; // For multi-step product wizard
+window.tempProductData = null;
+window.tempLocs = []; 
 
+// System Constants
 const ALL_UNITS = ['Crate', 'Carton', 'Dozen', 'Pcs', 'Kg', 'Ltr', 'Box', 'Bag', 'Packet', 'Set', 'Roll', 'Tin', 'Bundle', 'Pallet', 'Mita', 'Galoni'];
 const ALL_CURRENCIES = ['TZS', 'USD', 'EUR', 'GBP', 'KES', 'UGX', 'RWF', 'ZAR', 'AED', 'CNY', 'INR', 'CAD', 'AUD', 'JPY', 'CHF', 'SAR', 'QAR'];
 
-// --- UI UTILS ---
+// --- 1. BRANDING & SECURITY ENFORCEMENT (IMMEDIATE EXECUTION) ---
+// Hii inarun kabla ya kitu chochote ili kuondoa "Pilot My Stock"
+(function enforceBranding() {
+    document.title = "ugaviSmarT | Enterprise ERP";
+    const brandElements = document.querySelectorAll('.brand-logo, .logo-text, h1');
+    brandElements.forEach(el => {
+        if(el.innerText.includes('Pilot')) el.innerText = "ugaviSmarT";
+    });
+})();
+
+// --- UI UTILITIES ---
 window.closeModalOutside = (e) => { if (e.target.classList.contains('modal-backdrop')) e.target.style.display = 'none'; };
+
 window.showNotification = (message, type = 'success') => {
     const container = document.getElementById('toast-container');
+    if(!container) return alert(message); // Fallback
     const div = document.createElement('div');
     div.className = `px-6 py-4 rounded-xl text-white font-bold shadow-2xl flex items-center gap-3 transition-all duration-300 transform translate-y-0 ${type === 'success' ? 'bg-[#0F172A]' : 'bg-red-600'}`;
     div.innerHTML = `<span>${message}</span>`;
     container.appendChild(div);
     setTimeout(() => { div.style.opacity = '0'; setTimeout(() => div.remove(), 500); }, 3000);
 };
+
 window.premiumConfirm = (title, desc, btnText, callback) => {
     document.getElementById('confirm-title').innerText = title;
     document.getElementById('confirm-desc').innerText = desc;
@@ -42,42 +57,53 @@ window.premiumConfirm = (title, desc, btnText, callback) => {
     });
 };
 
-// --- INIT ---
+// --- INITIALIZATION (DEEP LOADING) ---
 window.onload = async () => {
-    // Force Branding
-    const brand = document.querySelector('.brand-logo');
-    if(brand) brand.innerText = 'ugaviSmarT';
-    
     window.logoutAction = logout;
     const session = await getSession();
-    if (!session) { window.location.href = 'index.html'; return; }
+    
+    // Redirect if no session (Security)
+    if (!session) { 
+        if(!window.location.href.includes('index.html')) window.location.href = 'index.html'; 
+        return; 
+    }
+
     try {
-        let { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-        if (!prof) { await new Promise(r => setTimeout(r, 1000)); let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); prof = retry.data; }
+        // Fetch Profile with Retry Logic
+        let { data: prof, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
+        if (error || !prof) { 
+            await new Promise(r => setTimeout(r, 1000)); 
+            let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single(); 
+            prof = retry.data; 
+        }
         
-        // Setup Check
+        // Setup Workflow Trigger
         if (!prof || !prof.organization_id) { 
-            // Populate Currency List in Setup Modal
             const setupCurr = document.getElementById('setupBaseCurr'); 
             if(setupCurr) setupCurr.innerHTML = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
-            
             document.getElementById('name-modal').style.display = 'flex';
             if(session.user.user_metadata?.full_name) document.getElementById('userNameInput').value = session.user.user_metadata.full_name;
             return; 
         }
         
-        if (prof.status === 'suspended') { await logout(); alert("Account Suspended."); return; }
+        // Security Check: Status
+        if (prof.status === 'suspended') { await logout(); alert("Account Suspended. Contact Admin."); return; }
+        
         window.profile = prof;
         
-        // Load Core Data (Locations & Suppliers)
+        // CACHE LOADING (CRITICAL FOR PERFORMANCE)
         const [locsRes, supsRes] = await Promise.all([
             supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
             supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
         ]);
+        
+        // ⚠️ SAFETY NET: Ensure arrays are never null to prevent .map() errors
         window.cachedLocations = locsRes.data || [];
         window.cachedSuppliers = supsRes.data || [];
+        
         await window.initCurrency();
         
+        // Role-Based UI Control
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
         if (role === 'finance' || role === 'deputy_finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
@@ -85,17 +111,22 @@ window.onload = async () => {
         else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
         else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
         
+        // Routing
         if (['overall_storekeeper', 'deputy_storekeeper', 'manager'].includes(role)) window.router('inventory');
         else window.router(role === 'barman' ? 'bar' : 'inventory');
-    } catch (e) { console.error(e); }
+
+    } catch (e) { console.error("Critical Init Error:", e); }
 };
 
+// --- ROUTER ENGINE ---
 window.router = async (view) => { 
     const app = document.getElementById('app-view'); 
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>'; 
+    
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active')); 
     const navEl = document.getElementById(`nav-${view}`); 
     if(navEl) navEl.classList.add('nav-active'); 
+    
     setTimeout(async () => { 
         try { 
             if (view === 'inventory') await window.renderInventory(app); 
@@ -104,16 +135,18 @@ window.router = async (view) => {
             else if (view === 'reports') await window.renderReports(app); 
             else if (view === 'staff') await window.renderStaff(app); 
             else if (view === 'settings') await window.renderSettings(app); 
-        } catch (e) { console.error(e); app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`; } 
+        } catch (e) { 
+            console.error(e); 
+            app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">System Error loading ${view}.<br><span class="text-xs text-slate-400">${e.message}</span></div>`; 
+        } 
     }, 50); 
 };
 
-// --- SETUP (RPC ONLY) ---
+// --- CORE: SETUP (RPC) ---
 window.saveName = async () => { 
     const orgName = document.getElementById('orgNameInput').value;
     const name = document.getElementById('userNameInput').value; 
     const phone = document.getElementById('userPhoneInput').value; 
-    // const camps = ... (Future: Capture initial camps here if needed, but RPC needs update for that)
 
     if (!orgName || !name) return window.showNotification("Fields Required", "error");
 
@@ -123,99 +156,195 @@ window.saveName = async () => {
         p_phone: phone
     });
 
-    if (error) return window.showNotification(error.message, "error");
+    if (error) return window.showNotification("Setup Error: " + error.message, "error");
 
     document.getElementById('name-modal').style.display = 'none';
-    window.showNotification("Karibu ugaviSmarT", "success");
+    window.showNotification("Welcome to ugaviSmarT", "success");
     location.reload(); 
 };
 
-// --- CURRENCY ---
-window.initCurrency = async () => { if (!window.profile) return; try { const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single(); window.baseCurrency = org?.base_currency || 'TZS'; const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id); window.currencyRates = {}; window.currencyRates[window.baseCurrency] = 1; (rates||[]).forEach(r => window.currencyRates[r.currency_code] = Number(r.rate)); } catch(e){} };
-window.convertAmount = (amount, fromCurr, toCurr) => { if (!amount) return 0; const fromRate = window.currencyRates[fromCurr]; const toRate = window.currencyRates[toCurr]; if (!fromRate || !toRate) return null; return fromCurr === window.baseCurrency ? amount * toRate : amount / fromRate; };
-window.formatPrice = (amount) => { if (!amount && amount !== 0) return '-'; let converted = window.convertAmount(amount, window.baseCurrency, window.selectedCurrency); return converted === null ? 'SET RATE' : `${window.selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: 2})}`; };
-window.changeCurrency = (curr) => { window.selectedCurrency = curr; localStorage.setItem('user_pref_currency', curr); const activeEl = document.querySelector('.nav-item.nav-active'); if (activeEl) window.router(activeEl.id.replace('nav-', '')); };
-window.getCurrencySelectorHTML = () => { const options = ALL_CURRENCIES.map(c => `<option value="${c}" ${window.selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join(''); return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`; };
+// --- STAFF MODULE (ERROR PROOFED & RESTORED) ---
+window.renderStaff = async (c) => {
+    // 1. Permission Check
+    if(!['manager', 'financial_controller'].includes(window.profile.role)) {
+        return c.innerHTML = '<div class="flex h-full items-center justify-center text-slate-400 font-bold uppercase tracking-widest">Access Restricted</div>';
+    }
 
-// --- PRODUCT REGISTRATION (LOCATION PRICES RESTORED) ---
-window.addProductModal = () => { 
-    if(!['manager','overall_storekeeper'].includes(window.profile.role)) return; 
-    const opts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join(''); 
-    const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join(''); 
-    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3><div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-4 mb-4"><div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Beverage">Beverage</option><option value="Food">Food</option><option value="Stationery">Stationery</option><option value="Linen">Linen</option><option value="Construction">Construction</option></select></div><div class="input-group mb-0"><label class="input-label">Unit (LPO)</label><select id="pUnit" class="input-field">${unitOpts}</select></div></div><div class="input-group mb-4"><label class="input-label">Items per Unit</label><input id="pConv" type="number" class="input-field font-mono font-bold" value="1"></div><div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field cursor-pointer bg-slate-50 font-bold text-slate-700">${opts}</select></div><div class="grid grid-cols-2 gap-4 mb-6"><div class="input-group mb-0"><label class="input-label">Cost Price</label><input id="pC" type="number" class="input-field"></div><div class="input-group mb-0"><label class="input-label">Selling Price (Base)</label><input id="pS" type="number" class="input-field"></div></div><button onclick="window.nextProductStep()" class="btn-primary">Next: Location Prices</button>`; 
-    document.getElementById('modal').style.display = 'flex'; 
-};
+    // 2. Safe Data Fetching
+    const [staffRes, inviteRes] = await Promise.all([
+        supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id),
+        supabase.from('staff_invites').select('*, locations(name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending')
+    ]);
 
-window.nextProductStep = async () => {
-    const name = document.getElementById('pN').value.toUpperCase();
-    const cost = parseFloat(document.getElementById('pC').value);
-    if(!name || isNaN(cost)) return window.showNotification("Invalid Input", "error");
+    // ⚠️ CRITICAL FIX: "Cannot read properties of null (reading 'map')"
+    // We force [] if data is null.
+    const staff = staffRes.data || [];
+    const invites = inviteRes.data || [];
 
-    window.tempProductData = {
-        name, 
-        category: document.getElementById('pCat').value,
-        unit: document.getElementById('pUnit').value,
-        conversion_factor: document.getElementById('pConv').value,
-        currency: document.getElementById('pCurrency').value,
-        cost,
-        selling: parseFloat(document.getElementById('pS').value)
-    };
-
-    // 🔥 HAPA TUNALETA CAMPS ZOTE (RESTORED)
-    const list = document.getElementById('price-list'); // Make sure you have a generic modal logic or replace content
-    const locs = window.cachedLocations; // Use cached
-    
-    let locHtml = locs.map(l => `
-        <div class="flex justify-between items-center mb-2 p-2 bg-slate-50 rounded border">
-            <label class="text-xs font-bold w-1/2">${l.name}</label>
-            <input type="number" class="loc-price-input input-field w-1/2" data-loc="${l.id}" value="${window.tempProductData.selling}" placeholder="Price">
+    // 3. Render
+    c.innerHTML = `
+    <div class="flex flex-col md:flex-row justify-between items-center gap-4 mb-8">
+        <div>
+            <h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Staff Management</h1>
+            <p class="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Total Users: ${staff.length}</p>
         </div>
-    `).join('');
+        <button onclick="window.inviteModal()" class="btn-primary w-auto px-6 shadow-lg bg-slate-900 text-white">+ NEW USER</button>
+    </div>
 
-    document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-4 uppercase text-center">Set Prices per Camp</h3>
-        <div class="mb-4 max-h-60 overflow-y-auto">${locHtml}</div>
-        <button onclick="window.finalizeProduct()" class="btn-primary">SAVE PRODUCT</button>
+    <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden mb-8">
+        <table class="w-full text-left">
+            <thead class="bg-slate-50 border-b border-slate-100">
+                <tr>
+                    <th class="p-4 text-[10px] uppercase text-slate-400">User</th>
+                    <th class="text-[10px] uppercase text-slate-400">Role</th>
+                    <th class="text-[10px] uppercase text-slate-400">Location</th>
+                    <th class="text-[10px] uppercase text-slate-400">Status</th>
+                    <th class="text-[10px] uppercase text-slate-400 text-right pr-6">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${staff.map(s => {
+                    const isMe = s.id === window.profile.id;
+                    return `
+                    <tr class="border-b last:border-0 hover:bg-slate-50 transition group">
+                        <td class="p-4">
+                            <div class="font-bold text-slate-700 text-sm">${s.full_name || 'Pending Setup'}</div>
+                            <div class="text-[10px] text-slate-400 font-mono">${s.email}</div>
+                        </td>
+                        <td class="p-4 text-xs font-bold text-slate-600 uppercase">${s.role.replace('_', ' ')}</td>
+                        <td class="p-4 text-xs text-slate-500 uppercase">${s.locations?.name || 'Global Access'}</td>
+                        <td class="p-4">
+                            <span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${s.status==='active'?'text-green-600 bg-green-50':'text-red-600 bg-red-50'}">${s.status}</span>
+                        </td>
+                        <td class="p-4 text-right pr-6">
+                            ${!isMe ? `
+                            <div class="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button onclick="window.viewStaffDetails('${s.id}')" class="p-2 hover:bg-white text-slate-400 hover:text-blue-600 rounded transition" title="Activity Logs">👁️</button>
+                                <button onclick="window.reassignModal('${s.id}', '${s.full_name}')" class="p-2 hover:bg-white text-slate-400 hover:text-orange-500 rounded transition" title="Reassign">📍</button>
+                                <button onclick="window.toggleSuspend('${s.id}', '${s.status}')" class="p-2 hover:bg-white text-slate-400 ${s.status==='active'?'hover:text-red-600':'hover:text-green-600'} rounded transition" title="${s.status==='active'?'Suspend':'Activate'}">${s.status==='active'?'🚫':'✅'}</button>
+                            </div>` : '<span class="text-[10px] text-slate-300 font-bold">YOU</span>'}
+                        </td>
+                    </tr>`;
+                }).join('')}
+            </tbody>
+        </table>
+    </div>
+
+    ${invites.length > 0 ? `
+    <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Pending Invites</h3>
+    <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden">
+        <table class="w-full text-left">
+            <tbody>
+                ${invites.map(i => `
+                    <tr class="border-b last:border-0 hover:bg-slate-50">
+                        <td class="p-4 font-mono text-xs text-slate-600">${i.email}</td>
+                        <td class="p-4 text-xs font-bold text-slate-500 uppercase">${i.role}</td>
+                        <td class="p-4 text-xs text-slate-400">Assigned: ${i.locations?.name || 'All'}</td>
+                        <td class="p-4 text-right pr-6">
+                            <button onclick="window.cancelInvite('${i.id}')" class="text-[10px] font-bold text-red-400 hover:text-red-600">CANCEL</button>
+                        </td>
+                    </tr>`).join('')}
+            </tbody>
+        </table>
+    </div>` : ''}
     `;
 };
 
-window.finalizeProduct = async () => {
-    const d = window.tempProductData;
-    const costBase = window.convertAmount(d.cost, d.currency, window.baseCurrency);
-    const sellingBase = window.convertAmount(d.selling, d.currency, window.baseCurrency);
-
-    // 1. Insert Product
-    const { data: prod, error } = await supabase.from('products').insert({
-        name: d.name, category: d.category, unit: d.unit, 
-        conversion_factor: d.conversion_factor, cost_price: costBase, 
-        selling_price: sellingBase, organization_id: window.profile.organization_id
-    }).select().single();
-
-    if(error) return window.showNotification(error.message, "error");
-
-    // 2. Insert Location Prices (RESTORED)
-    const priceInputs = document.querySelectorAll('.loc-price-input');
-    const prices = [];
-    priceInputs.forEach(i => {
-        if(i.value) prices.push({ organization_id: window.profile.organization_id, product_id: prod.id, location_id: i.dataset.loc, selling_price: window.convertAmount(parseFloat(i.value), d.currency, window.baseCurrency) });
-    });
-
-    if(prices.length > 0) await supabase.from('location_prices').insert(prices);
-
-    document.getElementById('modal').style.display = 'none';
-    window.showNotification("Product & Camp Prices Saved", "success");
-    window.router('inventory');
+// --- STAFF ACTIONS (RESTORED FULLY) ---
+window.inviteModal = () => {
+    // Populate locations
+    const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-6 uppercase text-center">Invite Staff</h3>
+        <div class="input-group"><label class="input-label">Email</label><input id="iE" type="email" class="input-field"></div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="input-group mb-0"><label class="input-label">Role</label>
+                <select id="iR" class="input-field">
+                    <option value="storekeeper">Storekeeper</option>
+                    <option value="barman">Barman</option>
+                    <option value="finance">Finance</option>
+                    <option value="financial_controller">Controller</option>
+                </select>
+            </div>
+            <div class="input-group mb-0"><label class="input-label">Assign To</label>
+                <select id="iL" class="input-field">${locOpts}</select>
+            </div>
+        </div>
+        <button onclick="window.execInvite()" class="btn-primary">SEND INVITE</button>
+    `;
+    document.getElementById('modal').style.display = 'flex';
 };
 
-// --- SETTINGS (CAMPS & SUPPLIERS RESTORED) ---
+window.execInvite = async () => {
+    const email = document.getElementById('iE').value;
+    if(!email) return;
+    await supabase.from('staff_invites').insert({
+        organization_id: window.profile.organization_id,
+        email, role: document.getElementById('iR').value,
+        assigned_location_id: document.getElementById('iL').value,
+        status: 'pending'
+    });
+    document.getElementById('modal').style.display = 'none';
+    window.showNotification("Invite Sent", "success");
+    window.renderStaff(document.getElementById('app-view'));
+};
+
+window.viewStaffDetails = async (id) => {
+    const [logs, p] = await Promise.all([
+        supabase.from('audit_logs').select('*').eq('user_id', id).order('created_at', {ascending: false}).limit(5),
+        supabase.from('profiles').select('*').eq('id', id).single()
+    ]);
+    
+    // Safety check for nulls
+    const logData = logs.data || [];
+    const prof = p.data;
+
+    const logHtml = logData.length ? logData.map(l => `<div class="text-[10px] border-b py-2"><span class="font-bold">${l.action}</span> - ${new Date(l.created_at).toLocaleString()}</div>`).join('') : '<span class="text-xs text-slate-400">No logs.</span>';
+
+    document.getElementById('modal-content').innerHTML = `
+        <div class="text-center mb-4">
+            <h3 class="font-bold text-lg">${prof.full_name}</h3>
+            <p class="text-xs text-slate-500">${prof.email} | ${prof.phone || 'No Phone'}</p>
+        </div>
+        <h4 class="text-xs font-bold uppercase text-slate-400 mb-2">Recent Activity</h4>
+        <div class="bg-slate-50 p-4 rounded-xl border mb-4">${logHtml}</div>
+    `;
+    document.getElementById('modal').style.display = 'flex';
+};
+
+window.reassignModal = (id, name) => {
+    const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-2 text-center">Move ${name}</h3>
+        <div class="input-group"><label class="input-label">New Location</label><select id="nL" class="input-field">${locOpts}</select></div>
+        <button onclick="window.doReassign('${id}')" class="btn-primary">CONFIRM</button>
+    `;
+    document.getElementById('modal').style.display = 'flex';
+};
+
+window.doReassign = async (id) => {
+    await supabase.from('profiles').update({ assigned_location_id: document.getElementById('nL').value }).eq('id', id);
+    document.getElementById('modal').style.display = 'none';
+    window.showNotification("Reassigned", "success");
+    window.renderStaff(document.getElementById('app-view'));
+};
+
+window.toggleSuspend = async (id, status) => {
+    const newStat = status === 'active' ? 'suspended' : 'active';
+    await supabase.from('profiles').update({ status: newStat }).eq('id', id);
+    window.showNotification("Status Updated", "success");
+    window.renderStaff(document.getElementById('app-view'));
+};
+
+// --- SETTINGS: LOCATIONS & SUPPLIERS (FULL DETAILS) ---
 window.renderSettings = async (c) => {
-    // Refresh Cache
+    // Refresh cache to ensure we have latest
     const [l, s] = await Promise.all([
         supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
         supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)
     ]);
-    window.cachedLocations = l.data;
-    window.cachedSuppliers = s.data;
+    window.cachedLocations = l.data || [];
+    window.cachedSuppliers = s.data || [];
 
     const rateRows = ALL_CURRENCIES.map(code => {
         const isBase = code === window.baseCurrency;
@@ -228,7 +357,7 @@ window.renderSettings = async (c) => {
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div class="space-y-8">
             <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
-                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Camps & Stores</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ ADD</button></div>
+                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ ADD</button></div>
                 <table class="w-full text-left"><tbody>${window.cachedLocations.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type.replace('_', ' ')}</td></tr>`).join('')}</tbody></table>
             </div>
             <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
@@ -238,39 +367,63 @@ window.renderSettings = async (c) => {
         </div>
         <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
             <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
-            <div class="max-h-[500px] overflow-y-auto pr-2">${rateRows}</div>
+            <div class="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">${rateRows}</div>
             <button onclick="window.saveRates()" class="btn-primary mt-6">UPDATE RATES</button>
         </div>
     </div>`;
 };
 
+// --- ADD STORE MODAL (FULL HIERARCHY) ---
 window.addStoreModal = () => {
+    // Generate Parent Options (Only Main Stores or Sub Stores can be parents)
+    const parents = window.cachedLocations.filter(l => l.type !== 'department').map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+    
     document.getElementById('modal-content').innerHTML = `
-        <h3 class="font-bold text-lg mb-6 uppercase text-center">New Location</h3>
-        <div class="input-group"><label class="input-label">Name</label><input id="locName" class="input-field uppercase"></div>
-        <div class="input-group"><label class="input-label">Type</label><select id="locType" class="input-field"><option value="sub_store">Sub Store / Camp</option><option value="department">POS Point (Bar/Kitchen)</option></select></div>
-        <button onclick="window.execAddStore()" class="btn-primary">CREATE</button>`;
+        <h3 class="font-bold text-lg mb-6 uppercase text-center">Add Location</h3>
+        <div class="input-group"><label class="input-label">Location Name</label><input id="locName" class="input-field uppercase"></div>
+        <div class="input-group"><label class="input-label">Type</label>
+            <select id="locType" class="input-field" onchange="document.getElementById('parentGrp').style.display = this.value === 'main_store' ? 'none' : 'block'">
+                <option value="sub_store">Camp / Sub-Store</option>
+                <option value="department">Department (Bar/Kitchen)</option>
+                <option value="main_store">Main Store (HQ)</option>
+            </select>
+        </div>
+        <div id="parentGrp" class="input-group">
+            <label class="input-label">Parent Store (Linked To)</label>
+            <select id="locParent" class="input-field">${parents}</select>
+        </div>
+        <button onclick="window.execAddStore()" class="btn-primary">CREATE LOCATION</button>
+    `;
     document.getElementById('modal').style.display = 'flex';
 };
 
 window.execAddStore = async () => {
     const name = document.getElementById('locName').value;
+    const type = document.getElementById('locType').value;
+    const parent = type === 'main_store' ? null : document.getElementById('locParent').value;
+    
     if(!name) return;
-    await supabase.from('locations').insert({ organization_id: window.profile.organization_id, name, type: document.getElementById('locType').value });
+
+    // Direct Insert (Allowed by SQL v100)
+    await supabase.from('locations').insert({ 
+        organization_id: window.profile.organization_id, 
+        name, type, parent_location_id: parent 
+    });
+    
     document.getElementById('modal').style.display = 'none';
     window.showNotification("Location Created", "success");
     window.router('settings');
 };
 
+// --- ADD SUPPLIER (FULL DETAILS) ---
 window.openSupplierModal = () => {
-    // 🔥 RESTORED ADDRESS FIELDS
     document.getElementById('modal-content').innerHTML = `
         <h3 class="font-bold text-lg mb-6 uppercase text-center">New Supplier</h3>
-        <div class="input-group"><label class="input-label">Name</label><input id="sN" class="input-field uppercase"></div>
-        <div class="input-group"><label class="input-label">TIN</label><input id="sT" class="input-field"></div>
-        <div class="input-group"><label class="input-label">Phone</label><input id="sP" class="input-field"></div>
-        <div class="input-group"><label class="input-label">Address / Location</label><input id="sA" class="input-field"></div>
-        <button onclick="window.execAddSupplier()" class="btn-primary">SAVE</button>`;
+        <div class="input-group"><label class="input-label">Company Name</label><input id="sN" class="input-field uppercase"></div>
+        <div class="input-group"><label class="input-label">TIN Number</label><input id="sT" class="input-field"></div>
+        <div class="input-group"><label class="input-label">Phone Contact</label><input id="sP" class="input-field"></div>
+        <div class="input-group"><label class="input-label">Physical Address</label><input id="sA" class="input-field" placeholder="e.g. Kariakoo, Mtaa wa Congo"></div>
+        <button onclick="window.execAddSupplier()" class="btn-primary">SAVE SUPPLIER</button>`;
     document.getElementById('modal').style.display = 'flex';
 };
 
@@ -280,46 +433,101 @@ window.execAddSupplier = async () => {
     await supabase.from('suppliers').insert({ 
         organization_id: window.profile.organization_id, 
         name, 
-        tin: document.getElementById('sT').value, 
+        tin: document.getElementById('sT').value,
         contact: document.getElementById('sP').value,
-        address: document.getElementById('sA').value // RESTORED
+        address: document.getElementById('sA').value // Captured
     });
     document.getElementById('modal').style.display = 'none';
-    window.showNotification("Saved", "success");
+    window.showNotification("Supplier Saved", "success");
     window.router('settings');
 };
 
-// --- STAFF (ACTIONS RESTORED) ---
-window.renderStaff = async (c) => {
-    if(!['manager', 'financial_controller'].includes(window.profile.role)) return c.innerHTML = '<div class="p-20 text-center text-slate-400">Restricted</div>';
-    
-    const [staff, invites] = await Promise.all([
-        supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id),
-        supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending')
-    ]);
+// --- PRODUCT WIZARD (LOCATION PRICING RESTORED) ---
+window.addProductModal = () => { 
+    if(!['manager','overall_storekeeper'].includes(window.profile.role)) return; 
+    const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join(''); 
+    const currOpts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
 
-    c.innerHTML = `
-    <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
-    <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8">
-        <table class="w-full text-left">
-            <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead>
-            <tbody>${staff.data.map(s => `
-                <tr class="border-b last:border-0 hover:bg-slate-50 transition">
-                    <td class="p-4 font-bold text-slate-700">${s.full_name}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td>
-                    <td class="text-xs uppercase">${s.role.replace('_', ' ')}</td>
-                    <td class="text-xs uppercase">${s.locations?.name || 'All'}</td>
-                    <td class="text-right pr-6 flex justify-end gap-2 mt-3">
-                        <button onclick="window.viewLogs('${s.id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">LOGS</button>
-                        <button onclick="window.toggleSuspend('${s.id}', '${s.status}')" class="text-[10px] border px-2 py-1 rounded ${s.status==='active'?'text-red-500 hover:bg-red-50':'text-green-500 hover:bg-green-50'}">${s.status==='active'?'SUSPEND':'ACTIVATE'}</button>
-                    </td>
-                </tr>`).join('')}
-            </tbody>
-        </table>
-    </div>`;
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-6 uppercase text-center">New Product</h3>
+        <div class="input-group"><label class="input-label">Name</label><input id="pN" class="input-field uppercase"></div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="input-group mb-0"><label class="input-label">Category</label><select id="pCat" class="input-field"><option value="Beverage">Beverage</option><option value="Food">Food</option><option value="Stationery">Stationery</option><option value="Linen">Linen</option></select></div>
+            <div class="input-group mb-0"><label class="input-label">Unit</label><select id="pUnit" class="input-field">${unitOpts}</select></div>
+        </div>
+        <div class="input-group mb-4"><label class="input-label">Conversion (Items per Unit)</label><input id="pConv" type="number" class="input-field" value="1"></div>
+        <div class="input-group mb-4"><label class="input-label">Currency</label><select id="pCurrency" class="input-field">${currOpts}</select></div>
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <div class="input-group mb-0"><label class="input-label">Cost Price</label><input id="pC" type="number" class="input-field"></div>
+            <div class="input-group mb-0"><label class="input-label">Base Selling Price</label><input id="pS" type="number" class="input-field"></div>
+        </div>
+        <button onclick="window.nextProductStep()" class="btn-primary">Next: Set Camp Prices</button>`; 
+    document.getElementById('modal').style.display = 'flex'; 
 };
 
-// ... (Retain Inventory, POS, Reports from previous robust versions) ...
-window.renderInventory = async (c) => { /* ... (Code as before) ... */ 
+window.nextProductStep = async () => {
+    const name = document.getElementById('pN').value.toUpperCase();
+    const cost = parseFloat(document.getElementById('pC').value);
+    if(!name || isNaN(cost)) return window.showNotification("Invalid Data", "error");
+
+    window.tempProductData = {
+        name, category: document.getElementById('pCat').value,
+        unit: document.getElementById('pUnit').value,
+        conversion_factor: document.getElementById('pConv').value,
+        currency: document.getElementById('pCurrency').value,
+        cost, selling: parseFloat(document.getElementById('pS').value)
+    };
+
+    // Render Camp Inputs
+    const campHtml = window.cachedLocations.map(l => `
+        <div class="flex justify-between items-center mb-2 bg-slate-50 p-2 rounded">
+            <span class="text-xs font-bold w-1/2">${l.name}</span>
+            <input type="number" class="loc-price-input input-field w-1/2 text-right" data-loc="${l.id}" value="${window.tempProductData.selling}" placeholder="Price">
+        </div>
+    `).join('');
+
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-4 text-center">Camp Pricing</h3>
+        <div class="mb-6 max-h-60 overflow-y-auto pr-1 custom-scrollbar">${campHtml}</div>
+        <button onclick="window.finalizeProduct()" class="btn-primary">SAVE PRODUCT</button>
+    `;
+};
+
+window.finalizeProduct = async () => {
+    const d = window.tempProductData;
+    const costBase = window.convertAmount(d.cost, d.currency, window.baseCurrency);
+    const sellingBase = window.convertAmount(d.selling, d.currency, window.baseCurrency);
+
+    // 1. Save Product
+    const { data: prod, error } = await supabase.from('products').insert({
+        name: d.name, category: d.category, unit: d.unit, 
+        conversion_factor: d.conversion_factor, cost_price: costBase, 
+        selling_price: sellingBase, organization_id: window.profile.organization_id
+    }).select().single();
+
+    if(error) return window.showNotification(error.message, "error");
+
+    // 2. Save Location Prices (Batch)
+    const inputs = document.querySelectorAll('.loc-price-input');
+    const prices = [];
+    inputs.forEach(i => {
+        if(i.value) prices.push({ 
+            organization_id: window.profile.organization_id, 
+            product_id: prod.id, 
+            location_id: i.dataset.loc, 
+            selling_price: window.convertAmount(parseFloat(i.value), d.currency, window.baseCurrency) 
+        });
+    });
+
+    if(prices.length) await supabase.from('location_prices').insert(prices);
+
+    document.getElementById('modal').style.display = 'none';
+    window.showNotification("Product Added", "success");
+    window.router('inventory');
+};
+
+// ... (Standard Logic for Inventory, POS, Reports - No changes needed as they are generic) ...
+window.renderInventory = async (c) => { /* Reuse Previous Logic */ 
     const isPOView = window.currentInvView === 'po'; 
     const stock = await getInventory(window.profile.organization_id);
     let filteredStock = stock;
