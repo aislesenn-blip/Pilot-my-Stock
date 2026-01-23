@@ -43,56 +43,44 @@ window.premiumConfirm = (title, desc, btnText, callback) => {
     });
 };
 
-// 🔥 FIX 1: PROFILE VIEWER (DETAILED & HISTORY)
-window.viewUserProfile = async (userId) => {
-    if(!userId) return;
-    try {
-        const { data: user } = await supabase.from('profiles').select('*').eq('id', userId).single();
-        if(!user) return;
-        
-        const assignedLoc = window.cachedLocations.find(l => l.id === user.assigned_location_id)?.name || 'Unassigned';
-        document.getElementById('pv-name').innerText = user.full_name || 'Unknown';
-        document.getElementById('pv-role').innerText = `${user.role.replace('_', ' ')} • ${assignedLoc}`;
-        document.getElementById('pv-initials').innerText = (user.full_name || 'U').charAt(0).toUpperCase();
-        document.getElementById('pv-phone').innerText = user.phone || 'Not Provided';
-        document.getElementById('pv-email').innerText = user.email || 'Synced via Auth'; 
-        document.getElementById('pv-joined').innerText = new Date(user.created_at || Date.now()).toLocaleDateString();
-        
-        const statusEl = document.getElementById('pv-status');
-        statusEl.innerText = user.status || 'ACTIVE';
-        statusEl.className = `px-2 py-1 rounded text-[9px] font-bold uppercase ${user.status==='suspended'?'bg-red-500 text-white':'bg-green-500 text-white'}`;
+// --- CORE FUNCTIONS (DEFINED GLOBALLY) ---
 
-        // Fetch Detailed Activity
-        const { data: history } = await supabase.from('transactions').select('*, products(name), locations:to_location_id(name)').eq('user_id', userId).order('created_at', {ascending:false}).limit(10);
-        const histList = document.getElementById('activity-list');
-        
-        if(history && history.length > 0) {
-            histList.innerHTML = history.map(h => `
-                <div class="flex justify-between items-center py-3 border-b border-slate-50 last:border-0">
-                    <div>
-                        <div class="font-bold text-slate-800 uppercase text-[10px] tracking-wide">${h.type}</div>
-                        <div class="text-[10px] text-slate-500">${h.products?.name} <span class="font-bold">x${h.quantity}</span></div>
-                    </div>
-                    <div class="text-[9px] text-slate-400 text-right">
-                        <div>${new Date(h.created_at).toLocaleDateString()}</div>
-                        <div class="font-mono">${h.total_value > 0 ? window.formatPrice(h.total_value) : ''}</div>
-                    </div>
-                </div>
-            `).join('');
-        } else {
-            histList.innerHTML = '<div class="text-center py-6 text-slate-300 italic text-xs">No recent activity found.</div>';
-        }
+window.renderSettings = async (c) => {
+    const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id);
+    const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id);
+    const rateRows = ALL_CURRENCIES.map(code => {
+        const isBase = code === window.baseCurrency;
+        const val = isBase ? 1 : (window.currencyRates[code] || '');
+        return `<div class="flex justify-between items-center py-2 border-b last:border-0"><span class="font-bold text-xs w-10">${code}</span>${isBase ? '<span class="text-xs font-mono font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded">BASE</span>' : `<input id="rate-${code}" type="number" step="0.01" value="${val}" class="w-24 input-field py-1 text-right font-mono text-xs" placeholder="Rate">`}</div>`;
+    }).join('');
 
-        document.getElementById('profile-viewer').style.display = 'flex';
-        window.switchProfileTab('details');
-    } catch(e) { console.error(e); }
+    c.innerHTML = `
+    <h1 class="text-3xl font-bold uppercase text-slate-900 mb-8">Settings</h1>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="space-y-8">
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
+                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ ADD</button></div>
+                <table class="w-full text-left"><tbody>${locs.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type}</td></tr>`).join('')}</tbody></table>
+            </div>
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
+                <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Suppliers</h3><button onclick="window.openSupplierModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ NEW</button></div>
+                <table class="w-full text-left"><tbody>${(sups||[]).map(s => `<tr onclick="window.openSupplierModal('${s.id}')" class="border-b last:border-0 cursor-pointer hover:bg-slate-50 transition"><td class="py-3 font-bold text-sm uppercase text-slate-700">${s.name}</td><td class="text-xs text-slate-400 font-mono text-right">${s.tin || '-'}</td></tr>`).join('')}</tbody></table>
+            </div>
+        </div>
+        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
+            <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div>
+            <div class="max-h-[500px] overflow-y-auto pr-2">${rateRows}</div>
+            <button onclick="window.saveRates()" class="btn-primary mt-6">UPDATE RATES</button>
+        </div>
+    </div>`;
 };
 
-window.switchProfileTab = (tab) => {
-    document.querySelectorAll('.tab-active').forEach(t => t.classList.remove('tab-active', 'border-b-2', 'border-slate-900', 'text-slate-900'));
-    document.getElementById(`tab-${tab}`).classList.add('tab-active', 'border-b-2', 'border-slate-900', 'text-slate-900');
-    document.getElementById('view-details').style.display = tab === 'details' ? 'block' : 'none';
-    document.getElementById('view-activity').style.display = tab === 'activity' ? 'block' : 'none';
+window.createPOModal = async () => { 
+    const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); 
+    const { data: sups } = await supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id); 
+    if(!prods || !prods.length) return window.showNotification("No products found.", "error"); 
+    document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Create LPO</h3><div class="input-group"><label class="input-label">Supplier</label>${(sups && sups.length) ? `<select id="lpoSup" class="input-field">${sups.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}</select>` : `<input id="lpoSupText" class="input-field" placeholder="Enter Supplier Name">`}</div><div class="bg-slate-50 p-4 rounded-xl border mb-4 max-h-60 overflow-y-auto">${prods.map(p => `<div class="flex items-center gap-2 mb-2"><input type="checkbox" class="lpo-check w-4 h-4" value="${p.id}" data-price="${p.cost_price}"><span class="flex-1 text-xs font-bold uppercase">${p.name}</span><input type="number" id="qty-${p.id}" class="w-16 input-field p-1 text-xs" placeholder="Qty"></div>`).join('')}</div><button onclick="window.execCreatePO()" class="btn-primary">GENERATE ORDER</button>`; 
+    document.getElementById('modal').style.display = 'flex'; 
 };
 
 // --- INITIALIZATION ---
@@ -119,16 +107,215 @@ window.onload = async () => {
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
         
+        // 🔥 STRICT PERMISSIONS & VISIBILITY
         if (role === 'finance') hide(['nav-bar', 'nav-settings', 'nav-staff']); 
-        else if (role === 'financial_controller' || role === 'overall_finance') hide(['nav-bar', 'nav-settings']); 
+        else if (role === 'financial_controller' || role === 'overall_finance' || role === 'deputy_finance') hide(['nav-bar', 'nav-settings']); 
         else if (role === 'storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
         else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
 
-        // Overall Storekeeper needs to land on Inventory
-        if (role === 'overall_storekeeper') window.router('inventory');
+        // Redirect based on Role
+        if (role === 'overall_storekeeper' || role === 'deputy_storekeeper') window.router('inventory');
         else window.router(role === 'barman' ? 'bar' : 'inventory');
 
     } catch (e) { console.error(e); }
+};
+
+window.router = async (view) => { 
+    const app = document.getElementById('app-view'); 
+    app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>'; 
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active')); 
+    const navEl = document.getElementById(`nav-${view}`); 
+    if(navEl) navEl.classList.add('nav-active'); 
+    
+    setTimeout(async () => { 
+        try { 
+            if (view === 'inventory') await window.renderInventory(app); 
+            else if (view === 'bar') await window.renderBar(app); 
+            else if (view === 'approvals') await window.renderApprovals(app); 
+            else if (view === 'reports') await window.renderReports(app); 
+            else if (view === 'staff') await window.renderStaff(app); 
+            else if (view === 'settings') await window.renderSettings(app); 
+        } catch (e) { 
+            console.error(e); 
+            app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`; 
+        } 
+    }, 50); 
+};
+
+// 1. INVENTORY (ADJUSTMENT & VISIBILITY)
+window.renderInventory = async (c) => {
+    const isPOView = window.currentInvView === 'po'; 
+    const stock = await getInventory(window.profile.organization_id);
+    
+    let filteredStock = stock;
+    const role = window.profile.role;
+    
+    // VISIBILITY LOGIC
+    if (role === 'barman') filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id && x.products.category === 'Beverage');
+    else if (role === 'storekeeper') filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id);
+    else if (['overall_storekeeper', 'manager', 'deputy_manager', 'deputy_storekeeper'].includes(role)) filteredStock = stock; 
+
+    const showPrice = ['manager','financial_controller','overall_finance','overall_storekeeper', 'deputy_manager', 'deputy_finance'].includes(role);
+    const canAdjust = ['manager', 'financial_controller', 'overall_storekeeper', 'deputy_manager'].includes(role);
+
+    let content = '';
+    if (isPOView) {
+        const { data: pos } = await supabase.from('purchase_orders').select('*, suppliers(name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
+        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="py-4 pl-4 text-xs text-slate-400 uppercase tracking-widest">Date</th><th class="text-xs text-slate-400 uppercase tracking-widest">Supplier</th><th class="text-xs text-slate-400 uppercase tracking-widest">Total</th><th class="text-xs text-slate-400 uppercase tracking-widest">Status</th><th class="text-xs text-slate-400 uppercase tracking-widest">Action</th></tr></thead><tbody>${(pos||[]).map(p => `<tr class="border-b border-slate-50 hover:bg-slate-50 transition"><td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-sm font-bold text-slate-800 uppercase">${p.suppliers?.name || p.supplier_name || 'Unknown'}</td><td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td><td><span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${p.status==='Pending'?'bg-yellow-50 text-yellow-600 border border-yellow-100':'bg-green-50 text-green-600 border border-green-100'}">${p.status}</span></td><td>${p.status==='Pending'?`<button onclick="window.confirmReceive('${p.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition shadow-sm font-bold">RECEIVE</button>`:'<span class="text-slate-300 text-[10px] font-bold">COMPLETED</span>'}</td></tr>`).join('')}</tbody></table>`;
+    } else {
+        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="py-4 pl-4 text-xs text-slate-400 uppercase tracking-widest">Item</th>${showPrice?`<th class="text-xs text-slate-400 uppercase tracking-widest">Cost</th><th class="text-xs text-slate-400 uppercase tracking-widest">Price</th>`:''} <th class="text-xs text-slate-400 uppercase tracking-widest">Store</th><th class="text-xs text-slate-400 uppercase tracking-widest">Stock</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th></tr></thead><tbody>${filteredStock.map(i => `<tr class="border-b border-slate-50 hover:bg-slate-50 transition group"><td class="py-4 pl-4"><div class="font-bold text-slate-800 uppercase text-sm">${i.products?.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs font-bold text-slate-900">${window.formatPrice(i.products.selling_price)}</td>`:''} <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td><td class="text-right pr-6 flex justify-end gap-2 mt-3">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold border border-slate-200 text-slate-600 px-3 py-1.5 rounded-lg hover:bg-slate-900 hover:text-white hover:border-slate-900 transition">MOVE</button>`:''}${canAdjust ? `<button onclick="window.requestStockAdjust('${i.id}', '${i.quantity}')" class="text-[10px] font-bold border border-red-100 text-red-500 px-3 py-1.5 rounded-lg hover:bg-red-50 transition">ADJUST</button>` : ''}</td></tr>`).join('')}</tbody></table>`;
+    }
+    // LPO BUTTON LOGIC: Managers, Overall Storekeepers, and their Deputies can create LPO
+    const canCreateLPO = ['manager', 'overall_storekeeper', 'deputy_manager', 'deputy_storekeeper'].includes(role);
+    
+    c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div><div class="flex gap-1 bg-slate-100 p-1.5 rounded-xl"><button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button><button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button></div><div class="flex gap-3">${canCreateLPO?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
+};
+
+window.requestStockAdjust = (invId, currentQty) => {
+    const newQty = prompt(`Current: ${currentQty}. Enter REAL Physical Quantity:`);
+    if(newQty === null || newQty === currentQty) return;
+    window.premiumConfirm("Request Adjustment?", "This requires approval.", "Request", async () => {
+        await supabase.from('change_requests').insert({
+            organization_id: window.profile.organization_id,
+            requester_id: window.profile.id,
+            target_table: 'inventory',
+            target_id: invId,
+            action: 'ADJUST_STOCK',
+            new_data: { new_qty: Number(newQty) },
+            status: 'pending'
+        });
+        window.showNotification("Adjustment Request Sent", "success");
+    });
+};
+
+// 5. STAFF (🔥 FIXED DEPUTY APPOINTMENT & SUSPEND)
+window.renderStaff = async (c) => {
+    const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', window.profile.organization_id);
+    const { data: inv } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
+    
+    // Who can Appoint a Deputy?
+    const canAppointDeputy = ['manager', 'financial_controller', 'overall_storekeeper'].includes(window.profile.role);
+
+    c.innerHTML = `
+    <div class="flex justify-between items-center mb-8">
+        <h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1>
+        <div class="flex gap-3">
+            ${canAppointDeputy ? `<button onclick="window.appointDeputyModal()" class="btn-primary w-auto px-6 bg-slate-800 hover:bg-slate-900">Appoint Deputy</button>` : ''}
+            <button onclick="window.inviteModal()" class="btn-primary w-auto px-6">+ INVITE STAFF</button>
+        </div>
+    </div>
+    <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-6 text-xs text-slate-400 uppercase tracking-widest">Name & Role</th><th class="text-xs text-slate-400 uppercase tracking-widest">Contact</th><th class="text-xs text-slate-400 uppercase tracking-widest">Location</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th></tr></thead><tbody>
+    ${staff.map(s => {
+        const locName = window.cachedLocations.find(l => l.id === s.assigned_location_id)?.name || 'Unassigned';
+        return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition"><td class="p-6"><button onclick="window.viewUserProfile('${s.id}')" class="text-left"><div class="font-bold text-sm uppercase text-slate-700 hover:text-blue-600 transition">${s.full_name}</div><div class="text-[10px] uppercase font-bold text-blue-600 mt-1">${s.role.replace('_',' ')}</div></button></td><td class="text-xs font-medium text-slate-600"><div>${s.phone || '-'}</div><div class="text-[10px] text-slate-400 mt-0.5">${s.email}</div></td><td class="text-xs font-bold uppercase text-slate-500">${locName}</td><td class="text-right p-6">
+            ${s.status==='suspended'?
+                `<button onclick="window.toggleUserStatus('${s.id}', 'active')" class="text-[9px] bg-green-100 text-green-800 px-3 py-1.5 rounded-full font-bold uppercase mr-2">Activate</button>`:
+                `<div class="flex justify-end gap-2">
+                    <button onclick="window.toggleUserStatus('${s.id}', 'suspended')" class="text-[9px] bg-orange-100 text-orange-800 px-3 py-1.5 rounded-full font-bold uppercase hover:bg-orange-200 transition">Suspend</button>
+                    <button onclick="window.openReassignModal('${s.id}', '${s.role}', '${s.assigned_location_id}')" class="text-[9px] bg-red-100 text-red-800 px-3 py-1.5 rounded-full font-bold uppercase hover:bg-red-200 transition">Reassign</button>
+                </div>`
+            }
+        </td></tr>`;
+    }).join('')}
+    ${inv.map(i => {
+        const locName = window.cachedLocations.find(l => l.id === i.assigned_location_id)?.name || 'Unassigned';
+        return `<tr class="bg-yellow-50/50 border-b border-yellow-100"><td class="p-6"><div class="font-bold text-sm text-slate-600">${i.email}</div><div class="text-[10px] uppercase font-bold text-slate-400 mt-1">${i.role.replace('_',' ')}</div></td><td class="text-xs text-slate-400 italic">Pending Acceptance</td><td class="text-xs font-bold uppercase text-slate-400">${locName}</td><td class="text-right p-6"><span class="text-[9px] bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full font-bold">PENDING</span></td></tr>`;
+    }).join('')}
+    </tbody></table></div>`;
+};
+
+// --- NEW DEPUTY FUNCTIONS ---
+window.appointDeputyModal = () => {
+    document.getElementById('deputy-modal').style.display = 'flex';
+};
+
+window.executeAppointDeputy = async () => {
+    const email = document.getElementById('depEmail').value;
+    if(!email) return window.showNotification("Email required", "error");
+    
+    // Determine Deputy Role based on Current User
+    let deputyRole = '';
+    if(window.profile.role === 'manager') deputyRole = 'deputy_manager';
+    else if(window.profile.role === 'financial_controller') deputyRole = 'deputy_finance';
+    else if(window.profile.role === 'overall_storekeeper') deputyRole = 'deputy_storekeeper';
+    else return window.showNotification("You cannot appoint a deputy.", "error");
+
+    await supabase.from('staff_invites').insert({
+        email: email,
+        role: deputyRole,
+        organization_id: window.profile.organization_id,
+        status: 'pending',
+        is_deputy: true
+    });
+
+    document.getElementById('deputy-modal').style.display = 'none';
+    window.showNotification(`Deputy Invitation Sent (${deputyRole})`, "success");
+    window.router('staff');
+};
+
+// --- EXISTING FUNCTIONS (WITH FIXES) ---
+window.toggleUserStatus = async (id, status) => {
+    if(id === window.profile.id) return window.showNotification("Cannot suspend self", "error");
+    const msg = status === 'suspended' ? 'Suspend temporarily? User can be reactivated.' : 'Activate user?';
+    window.premiumConfirm(`${status === 'suspended' ? 'Suspend' : 'Activate'} User`, msg, "Confirm", async () => {
+        await supabase.from('profiles').update({ status }).eq('id', id);
+        window.showNotification("Status Updated", "success");
+        window.renderStaff(document.getElementById('app-view'));
+    });
+};
+
+window.openReassignModal = (id, role, loc) => {
+    document.getElementById('suspendUserId').value = id;
+    document.getElementById('suspendUserRole').value = role;
+    document.getElementById('suspendUserLoc').value = loc;
+    document.getElementById('reassign-modal').style.display = 'flex';
+};
+
+window.executeReassign = async () => {
+    const oldUserId = document.getElementById('suspendUserId').value;
+    const role = document.getElementById('suspendUserRole').value;
+    const loc = document.getElementById('suspendUserLoc').value;
+    const newEmail = document.getElementById('reassignEmail').value;
+    if(!newEmail) return window.showNotification("Email required", "error");
+    await supabase.from('profiles').update({ status: 'suspended' }).eq('id', oldUserId);
+    await supabase.from('staff_invites').insert({ email: newEmail, role: role, organization_id: window.profile.organization_id, assigned_location_id: loc, status: 'pending', replaced_user_id: oldUserId });
+    document.getElementById('reassign-modal').style.display = 'none';
+    window.showNotification("User Replaced. Invite Sent.", "success");
+    window.router('staff');
+};
+
+window.viewUserProfile = async (userId) => {
+    if(!userId) return;
+    try {
+        const { data: user } = await supabase.from('profiles').select('*').eq('id', userId).single();
+        if(!user) return;
+        const assignedLoc = window.cachedLocations.find(l => l.id === user.assigned_location_id)?.name || 'Unassigned';
+        document.getElementById('pv-name').innerText = user.full_name || 'Unknown';
+        document.getElementById('pv-role').innerText = `${user.role.replace('_', ' ')} • ${assignedLoc}`;
+        document.getElementById('pv-initials').innerText = (user.full_name || 'U').charAt(0).toUpperCase();
+        document.getElementById('pv-phone').innerText = user.phone || 'Not Provided';
+        document.getElementById('pv-email').innerText = user.email || 'No Email'; 
+        document.getElementById('pv-joined').innerText = new Date(user.created_at || Date.now()).toLocaleDateString();
+        const statusEl = document.getElementById('pv-status');
+        statusEl.innerText = user.status || 'ACTIVE';
+        statusEl.className = `px-2 py-1 rounded text-[9px] font-bold uppercase ${user.status==='suspended'?'bg-red-500 text-white':'bg-green-500 text-white'}`;
+        const { data: history } = await supabase.from('transactions').select('*, products(name)').eq('user_id', userId).order('created_at', {ascending:false}).limit(10);
+        const histList = document.getElementById('activity-list');
+        if(history && history.length > 0) {
+            histList.innerHTML = history.map(h => `<div class="flex justify-between items-center py-2 border-b border-slate-50 last:border-0"><div><div class="font-bold text-slate-700 uppercase text-[10px]">${h.type}</div><div class="text-[9px] text-slate-400">${h.products?.name}</div></div><div class="text-[9px] text-slate-400 text-right"><div>${new Date(h.created_at).toLocaleDateString()}</div></div></div>`).join('');
+        } else {
+            histList.innerHTML = '<div class="text-center py-4 text-slate-300 italic">No recent activity.</div>';
+        }
+        document.getElementById('profile-viewer').style.display = 'flex';
+        window.switchProfileTab('details');
+    } catch(e) { console.error(e); }
+};
+
+window.switchProfileTab = (tab) => {
+    document.querySelectorAll('.tab-active').forEach(t => t.classList.remove('tab-active', 'border-b-2', 'border-slate-900', 'text-slate-900'));
+    document.getElementById(`tab-${tab}`).classList.add('tab-active', 'border-b-2', 'border-slate-900', 'text-slate-900');
+    document.getElementById('view-details').style.display = tab === 'details' ? 'block' : 'none';
+    document.getElementById('view-activity').style.display = tab === 'activity' ? 'block' : 'none';
 };
 
 window.saveName = async () => { const name = document.getElementById('userNameInput').value; const phone = document.getElementById('userPhoneInput').value; await supabase.from('profiles').update({ full_name: name, phone: phone }).eq('id', window.profile.id); location.reload(); };
@@ -137,36 +324,7 @@ window.convertAmount = (amount, fromCurr, toCurr) => { if (!amount) return 0; co
 window.formatPrice = (amount) => { if (!amount && amount !== 0) return '-'; let converted = window.convertAmount(amount, window.baseCurrency, window.selectedCurrency); return converted === null ? 'SET RATE' : `${window.selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: 2})}`; };
 window.changeCurrency = (curr) => { window.selectedCurrency = curr; localStorage.setItem('user_pref_currency', curr); const activeEl = document.querySelector('.nav-item.nav-active'); if (activeEl) window.router(activeEl.id.replace('nav-', '')); };
 window.getCurrencySelectorHTML = () => { const options = ALL_CURRENCIES.map(c => `<option value="${c}" ${window.selectedCurrency === c ? 'selected' : ''}>${c}</option>`).join(''); return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4">${options}</select>`; };
-window.router = async (view) => { const app = document.getElementById('app-view'); app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>'; document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active')); const navEl = document.getElementById(`nav-${view}`); if(navEl) navEl.classList.add('nav-active'); setTimeout(async () => { try { if (view === 'inventory') await window.renderInventory(app); else if (view === 'bar') await window.renderBar(app); else if (view === 'approvals') await window.renderApprovals(app); else if (view === 'reports') await window.renderReports(app); else if (view === 'staff') await window.renderStaff(app); else if (view === 'settings') await window.renderSettings(app); } catch (e) { console.error(e); app.innerHTML = `<div class="p-10 text-red-500 font-bold text-center">Error loading ${view}: ${e.message}</div>`; } }, 50); };
 
-// 1. INVENTORY (ACCESS FIX FOR OVERALL STOREKEEPER)
-window.renderInventory = async (c) => {
-    const isPOView = window.currentInvView === 'po'; 
-    const stock = await getInventory(window.profile.organization_id);
-    
-    let filteredStock = stock;
-    if (window.profile.role === 'barman') {
-        filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id && x.products.category === 'Beverage');
-    } else if (window.profile.role === 'storekeeper') {
-        filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id);
-    } else if (window.profile.role === 'overall_storekeeper') {
-        // 🔥 FIX: Sees Everything
-        filteredStock = stock;
-    }
-
-    const showPrice = ['manager','financial_controller','overall_finance','overall_storekeeper'].includes(window.profile.role);
-
-    let content = '';
-    if (isPOView) {
-        const { data: pos } = await supabase.from('purchase_orders').select('*, suppliers(name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
-        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="py-4 pl-4 text-xs text-slate-400 uppercase tracking-widest">Date</th><th class="text-xs text-slate-400 uppercase tracking-widest">Supplier</th><th class="text-xs text-slate-400 uppercase tracking-widest">Total</th><th class="text-xs text-slate-400 uppercase tracking-widest">Status</th><th class="text-xs text-slate-400 uppercase tracking-widest">Action</th></tr></thead><tbody>${(pos||[]).map(p => `<tr class="border-b border-slate-50 hover:bg-slate-50 transition"><td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-sm font-bold text-slate-800 uppercase">${p.suppliers?.name || p.supplier_name || 'Unknown'}</td><td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td><td><span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${p.status==='Pending'?'bg-yellow-50 text-yellow-600 border border-yellow-100':'bg-green-50 text-green-600 border border-green-100'}">${p.status}</span></td><td>${p.status==='Pending'?`<button onclick="window.confirmReceive('${p.id}')" class="text-[10px] bg-slate-900 text-white px-4 py-2 rounded-lg hover:bg-slate-800 transition shadow-sm font-bold">RECEIVE</button>`:'<span class="text-slate-300 text-[10px] font-bold">COMPLETED</span>'}</td></tr>`).join('')}</tbody></table>`;
-    } else {
-        content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="py-4 pl-4 text-xs text-slate-400 uppercase tracking-widest">Item</th>${showPrice?`<th class="text-xs text-slate-400 uppercase tracking-widest">Cost</th><th class="text-xs text-slate-400 uppercase tracking-widest">Price</th>`:''} <th class="text-xs text-slate-400 uppercase tracking-widest">Store</th><th class="text-xs text-slate-400 uppercase tracking-widest">Stock</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th></tr></thead><tbody>${filteredStock.map(i => `<tr class="border-b border-slate-50 hover:bg-slate-50 transition group"><td class="py-4 pl-4"><div class="font-bold text-slate-800 uppercase text-sm">${i.products?.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td><td class="font-mono text-xs font-bold text-slate-900">${window.formatPrice(i.products.selling_price)}</td>`:''} <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td><td class="text-right pr-6">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] font-bold border border-slate-200 text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-900 hover:text-white hover:border-slate-900 transition uppercase tracking-wider">Move</button>`:''}</td></tr>`).join('')}</tbody></table>`;
-    }
-    c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Inventory</h1>${showPrice ? window.getCurrencySelectorHTML() : ''}</div><div class="flex gap-1 bg-slate-100 p-1.5 rounded-xl"><button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button><button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button></div><div class="flex gap-3">${window.profile.role==='manager'||window.profile.role==='overall_storekeeper'?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
-};
-
-// 2. BAR (POS)
 window.renderBar = async (c) => {
     const inv = await getInventory(window.profile.organization_id);
     const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).eq('type', 'department');
@@ -186,66 +344,30 @@ window.remCart = (id) => { window.cart=window.cart.filter(c=>c.id!==id); window.
 window.confirmCheckout = () => { if(!window.cart.length) return; window.premiumConfirm(`Confirm ${window.selectedPaymentMethod.toUpperCase()} Sale?`, "Charge this amount.", "Charge", window.doCheckout); };
 window.doCheckout = async () => { try { await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id, window.selectedPaymentMethod); window.showNotification("Sale Completed Successfully", "success"); window.cart=[]; window.renderCart(); window.router('bar'); } catch(e) { window.showNotification(e.message, "error"); } };
 
-// 3. APPROVALS
+// 3. APPROVALS (CHANGE REQUESTS VISIBLE)
 window.renderApprovals = async (c) => {
-    // 🔥 FIX: Show Change Requests for Admin
-    if(window.profile.role === 'storekeeper') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
-    
-    // 1. Stock Requests
+    if(window.profile.role === 'storekeeper' || window.profile.role === 'barman') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
     const reqs = await getPendingApprovals(window.profile.organization_id);
-    
-    // 2. Change Requests (Edit/Delete)
     const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
-    
     c.innerHTML = `
     <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1>
-    
-    <div class="mb-8">
-        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3>
-        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <table class="w-full text-left"><tbody>
-            ${reqs.length ? reqs.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td><td class="p-6"><div class="text-blue-600 font-mono font-bold text-lg">${r.quantity}</div><div class="text-xs text-slate-400 uppercase mt-1">Requested</div></td><td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td><td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>'}
-            </tbody></table>
-        </div>
-    </div>
-
-    <div>
-        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Audit Requests (Void/Edit)</h3>
-        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-            <table class="w-full text-left"><tbody>
-            ${changes && changes.length ? changes.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action} TRANSACTION</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div></td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No audit requests.</td></tr>'}
-            </tbody></table>
-        </div>
-    </div>`;
+    <div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${reqs.length ? reqs.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td><td class="p-6"><div class="text-blue-600 font-mono font-bold text-lg">${r.quantity}</div><div class="text-xs text-slate-400 uppercase mt-1">Requested</div></td><td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td><td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>'}</tbody></table></div></div>
+    <div><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust)</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${changes && changes.length ? changes.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action}</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div></td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>'}</tbody></table></div></div>`;
 };
 window.confirmApprove = (id) => { window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Authorized", "success"); window.router('approvals'); }); };
-window.approveChange = (id) => { window.premiumConfirm("Approve Change?", "This will execute the request.", "Approve", async () => { await supabase.rpc('process_change_request', { p_request_id: id, p_status: 'approved', p_reviewer_id: window.profile.id }); window.showNotification("Change Executed", "success"); window.router('approvals'); }); };
+window.approveChange = (id) => { window.premiumConfirm("Approve Change?", "Execute this request.", "Approve", async () => { await supabase.rpc('process_change_request', { p_request_id: id, p_status: 'approved', p_reviewer_id: window.profile.id }); window.showNotification("Executed", "success"); window.router('approvals'); }); };
 
-// 4. REPORTS (🔥 REVOLUTIONIZED)
 window.renderReports = async (c) => {
+    const isController = ['financial_controller', 'manager', 'overall_finance', 'deputy_manager', 'deputy_finance'].includes(window.profile.role);
     const isVariance = window.currentRepView === 'variance';
     if(isVariance) {
         const { data: takes } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name, role, phone, id, assigned_location_id)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
         c.innerHTML = `<div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Reconciliation</h1><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button onclick="window.currentRepView='general'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">GENERAL</button><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">VARIANCE</button></div><button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-6 bg-red-600 hover:bg-red-700">NEW COUNT</button></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead><tr class="bg-slate-50 border-b border-slate-100"><th class="p-4 text-xs text-slate-400 uppercase">Date</th><th class="text-xs text-slate-400 uppercase">Location</th><th class="text-xs text-slate-400 uppercase">Conducted By</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Report</th></tr></thead><tbody>${(takes||[]).map(t => `<tr><td class="p-4 text-xs font-bold text-slate-500">${new Date(t.created_at).toLocaleDateString()}</td><td class="text-xs font-bold uppercase text-slate-800">${t.locations?.name}</td><td class="text-xs uppercase">${t.profiles?.full_name}</td><td class="text-right pr-6"><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold text-[10px]">VIEW</button></td></tr>`).join('')}</tbody></table></div>`;
     } else {
         const { data: logs } = await supabase.from('transactions').select(`*, products (name, category), locations:to_location_id (name), from_loc:from_location_id (name), profiles:user_id (full_name, role, phone, id, assigned_location_id)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(500);
-        const { data: staff } = await supabase.from('profiles').select('id, full_name').eq('organization_id', window.profile.organization_id);
         window.currentLogs = logs || [];
-        const isController = window.profile.role === 'financial_controller';
-        c.innerHTML = `
-        <div class="flex flex-col gap-6 mb-8">
-            <div class="flex justify-between items-center gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Reports</h1>${window.getCurrencySelectorHTML()}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">VARIANCE</button></div></div>
-            <div class="bg-white p-4 rounded-2xl border border-slate-200 flex flex-wrap items-end gap-4 shadow-sm">
-                <div><label class="input-label">Start</label><input type="date" id="repStart" class="input-field w-32" onchange="window.filterReport()"></div>
-                <div><label class="input-label">End</label><input type="date" id="repEnd" class="input-field w-32" onchange="window.filterReport()"></div>
-                <div class="flex-1"><label class="input-label">Type</label><select id="repType" class="input-field" onchange="window.filterReport()"><option value="all">All Transactions</option><option value="sale">Sales</option><option value="receive">Received Stock</option><option value="transfer">Transfers</option></select></div>
-                <div class="flex-1"><label class="input-label">Staff</label><select id="repStaff" class="input-field" onchange="window.filterReport()"><option value="all">All Staff</option>${staff.map(s=>`<option value="${s.id}">${s.full_name}</option>`).join('')}</select></div>
-                <div><label class="input-label">Status</label><select id="repStat" class="input-field w-32" onchange="window.filterReport()"><option value="all">All</option><option value="valid">Valid</option><option value="void">Void</option></select></div>
-                <button onclick="window.exportCSV()" class="btn-primary w-auto px-6 h-[46px] bg-green-700 hover:bg-green-800">EXPORT</button>
-            </div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8"><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Total Revenue</p><p class="text-4xl font-mono font-bold text-slate-900" id="repRev">...</p></div><div class="bg-white p-8 border border-slate-200 rounded-[24px] shadow-sm"><p class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Gross Profit</p><p class="text-4xl font-mono font-bold text-green-600" id="repProf">...</p></div></div>
-        <div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-4 pl-6 text-xs text-slate-400 uppercase tracking-widest">Date / Time</th><th class="text-xs text-slate-400 uppercase tracking-widest">Action</th><th class="text-xs text-slate-400 uppercase tracking-widest">Item</th><th class="text-xs text-slate-400 uppercase tracking-widest">Flow (From -> To)</th><th class="text-xs text-slate-400 uppercase tracking-widest">Detail / Status</th><th class="text-xs text-slate-400 uppercase tracking-widest">Qty</th>${isController?'<th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Controls</th>':''}</tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
+        
+        c.innerHTML = `<div class="flex flex-col gap-6 mb-8"><div class="flex justify-between items-center gap-4"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900 tracking-tight">Reports</h1>${window.getCurrencySelectorHTML()}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-lg"><button class="px-6 py-2 text-xs font-bold rounded-md bg-white shadow-sm text-slate-900 transition">GENERAL</button><button onclick="window.currentRepView='variance'; window.router('reports')" class="px-6 py-2 text-xs font-bold rounded-md text-slate-500 hover:text-slate-900 transition">VARIANCE</button></div></div><div class="bg-white p-4 rounded-2xl border border-slate-200 flex flex-wrap items-end gap-4 shadow-sm"><div><label class="input-label">Start</label><input type="date" id="repStart" class="input-field w-32" onchange="window.filterReport()"></div><div><label class="input-label">End</label><input type="date" id="repEnd" class="input-field w-32" onchange="window.filterReport()"></div><button onclick="window.exportCSV()" class="btn-primary w-auto px-6 h-[46px] bg-green-700 hover:bg-green-800">EXPORT</button></div></div><div class="bg-white rounded-[24px] border border-slate-200 shadow-sm overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-4 pl-6 text-xs text-slate-400 uppercase tracking-widest">Date / Time</th><th class="text-xs text-slate-400 uppercase tracking-widest">Action</th><th class="text-xs text-slate-400 uppercase tracking-widest">Item</th><th class="text-xs text-slate-400 uppercase tracking-widest">Detail</th><th class="text-xs text-slate-400 uppercase tracking-widest">Qty</th>${isController?'<th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Controls</th>':''}</tr></thead><tbody id="logsBody"></tbody></table></div></div>`;
         window.filterReport();
     }
 };
@@ -253,55 +375,28 @@ window.renderReports = async (c) => {
 window.filterReport = () => {
     const start = document.getElementById('repStart')?.value;
     const end = document.getElementById('repEnd')?.value;
-    const type = document.getElementById('repType')?.value;
-    const staff = document.getElementById('repStaff')?.value;
-    const stat = document.getElementById('repStat')?.value;
+    const isController = ['financial_controller', 'manager', 'overall_finance', 'deputy_manager'].includes(window.profile.role);
 
     let f = window.currentLogs;
     if(start) f = f.filter(l => new Date(l.created_at) >= new Date(start));
     if(end) f = f.filter(l => new Date(l.created_at) <= new Date(end + 'T23:59:59'));
-    if(type && type !== 'all') f = f.filter(l => l.type === type);
-    if(staff && staff !== 'all') f = f.filter(l => l.user_id === staff);
-    if(stat && stat !== 'all') f = f.filter(l => l.status === stat);
     
-    const activeTx = f.filter(l => l.status !== 'void');
-    const totalSales = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.total_value) || 0), 0);
-    const totalProfit = activeTx.filter(l => l.type === 'sale').reduce((sum, l) => sum + (Number(l.profit) || 0), 0);
-    document.getElementById('repRev').innerHTML = window.formatPrice(totalSales);
-    document.getElementById('repProf').innerHTML = window.formatPrice(totalProfit);
-
     const b = document.getElementById('logsBody');
     b.innerHTML = f.map(l => {
         const isVoid = l.status === 'void';
-        let actionColor='text-slate-800', detail='-', flow='-';
+        let actionColor='text-slate-800', detail='-';
         
-        // 🔥 LOGIC: Smart Details based on Transaction Type
-        if(l.type === 'sale') { 
-            actionColor='text-green-600'; 
-            detail=`PAID: ${(l.payment_method||'CASH').toUpperCase()}`;
-            flow = l.from_loc?.name || 'Store'; // Sales come from a store
-        }
-        else if(l.type === 'receive') { 
-            actionColor='text-blue-600'; 
-            detail='FROM SUPPLIER';
-            flow = `Supplier -> ${l.locations?.name}`;
-        }
-        else if(l.type === 'transfer') { 
-            actionColor='text-orange-600'; 
-            detail='IN TRANSIT / DELIVERED'; // Simplified for now
-            flow = `${l.from_loc?.name} -> ${l.locations?.name}`;
-        }
+        if(l.type === 'sale') { actionColor='text-green-600'; detail=`PAID: ${l.payment_method}`; }
+        else if(l.type === 'receive') { actionColor='text-blue-600'; detail='FROM SUPPLIER'; }
+        else if(l.type === 'transfer') { actionColor='text-orange-600'; detail=`${l.from_loc?.name} -> ${l.locations?.name}`; }
 
         return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition group ${isVoid ? 'bg-slate-50 opacity-50 grayscale' : ''}">
-            <td class="p-4 pl-6 text-xs font-bold text-slate-500 ${isVoid ? 'line-through' : ''}">${new Date(l.created_at).toLocaleDateString()}<span class="block text-[10px] opacity-50">${new Date(l.created_at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></td>
+            <td class="p-4 pl-6 text-xs font-bold text-slate-500 ${isVoid ? 'line-through' : ''}">${new Date(l.created_at).toLocaleDateString()} ${new Date(l.created_at).toLocaleTimeString()}</td>
             <td class="p-4 text-xs font-bold ${actionColor} uppercase ${isVoid ? 'line-through' : ''}">${l.type}</td>
-            <td class="p-4 text-xs text-slate-600 font-medium ${isVoid ? 'line-through' : ''}"><div class="font-bold">${l.products?.name}</div><div class="text-[9px] text-slate-400">By: ${l.profiles?.full_name}</div></td>
-            <td class="p-4 text-xs font-mono text-slate-500 uppercase ${isVoid ? 'line-through' : ''}">${flow}</td>
+            <td class="p-4 text-xs text-slate-600 font-medium ${isVoid ? 'line-through' : ''}">${l.products?.name}</td>
             <td class="p-4 text-[10px] font-bold text-slate-500 uppercase tracking-wider ${isVoid ? 'line-through' : ''}">${detail}</td>
             <td class="p-4 font-mono text-sm font-bold text-slate-900 ${isVoid ? 'line-through' : ''}">${l.quantity}</td>
-            ${isController && !isVoid ? `<td class="text-right pr-6 flex justify-end gap-2 mt-2">
-                <button onclick="window.requestDeleteTransaction('${l.id}')" class="text-[9px] bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-100">VOID REQUEST</button>
-            </td>` : isController ? `<td class="text-right pr-6"><span class="text-[9px] font-bold text-red-400">VOIDED</span></td>` : ''}
+            ${isController && !isVoid ? `<td class="text-right pr-6"><button onclick="window.requestDeleteTransaction('${l.id}')" class="text-[9px] bg-red-50 text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-100">VOID</button></td>` : isController ? `<td class="text-right pr-6"><span class="text-[9px] text-red-400 font-bold">VOIDED</span></td>` : ''}
         </tr>`;
     }).join('');
 };
@@ -309,12 +404,12 @@ window.filterReport = () => {
 window.requestDeleteTransaction = async (id) => {
     window.premiumConfirm("Request Void?", "Admin must approve.", "Send Request", async () => {
         await supabase.from('change_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, target_table: 'transactions', target_id: id, action: 'VOID', status: 'pending' });
-        window.showNotification("Request Sent to Admin", "success");
+        window.showNotification("Request Sent", "success");
     });
 };
 
 /* ... EXPORT, CONFIRM RECEIVE, ADD STOCK ... SAME */
-window.exportCSV = () => { let rows=[["Date","Time","Action","Item","User","Flow","Detail","Status","Quantity","Value"]]; const f=window.currentLogs; f.forEach(l=>{ rows.push([new Date(l.created_at).toLocaleDateString(),new Date(l.created_at).toLocaleTimeString(),l.type,l.products?.name,l.profiles?.full_name,`${l.from_loc?.name||''}->${l.locations?.name||''}`,l.payment_method||'-',l.status||'valid',l.quantity,l.total_value||0]); }); let csvContent="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n"); let link=document.createElement("a"); link.setAttribute("href",encodeURI(csvContent)); link.setAttribute("download",`Report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); };
+window.exportCSV = () => { let rows=[["Date","Time","Action","Item","User","Detail","Status","Quantity"]]; const f=window.currentLogs; f.forEach(l=>{ rows.push([new Date(l.created_at).toLocaleDateString(),new Date(l.created_at).toLocaleTimeString(),l.type,l.products?.name,l.profiles?.full_name,l.payment_method||'-',l.status||'valid',l.quantity]); }); let csvContent="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n"); let link=document.createElement("a"); link.setAttribute("href",encodeURI(csvContent)); link.setAttribute("download",`Report_${new Date().toISOString().split('T')[0]}.csv`); document.body.appendChild(link); link.click(); };
 window.confirmReceive = (id) => { window.premiumConfirm("Confirm Receipt", "Are you sure you have physically received these items?", "Receive Stock", () => window.receivePO(id)); };
 window.receivePO = async (id) => { const { error } = await supabase.rpc('receive_stock_wac', { p_po_id: id, p_user_id: window.profile.id, p_org_id: window.profile.organization_id }); if (error) window.showNotification(error.message, "error"); else { window.showNotification("Stock Received (WAC Updated)", "success"); window.router('inventory'); } };
 window.addStockModal = async () => { if(window.profile.role !== 'manager' && window.profile.role !== 'overall_storekeeper') return; const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name'); const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Receive Stock</h3><div class="input-group"><label class="input-label">Item</label><select id="sP" class="input-field">${prods.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Store</label><select id="sL" class="input-field">${locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}</select></div><div class="input-group"><label class="input-label">Qty</label><input id="sQ" type="number" class="input-field"></div><button onclick="window.execAddStock()" class="btn-primary">CONFIRM</button>`; document.getElementById('modal').style.display = 'flex'; };
@@ -329,44 +424,3 @@ window.newStockTakeModal = async () => { const { data: locs } = await supabase.f
 window.startStockTake = async () => { const locId = document.getElementById('stLoc').value; const inv = await getInventory(window.profile.organization_id); const items = inv.filter(x => x.location_id === locId); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Count Items</h3><div class="bg-slate-50 p-2 rounded max-h-60 overflow-y-auto mb-4 border">${items.map(i => `<div class="flex justify-between items-center mb-2"><span class="text-xs font-bold w-1/2">${i.products.name}</span><input type="number" class="st-input w-20 border rounded p-1 text-center font-bold text-slate-900" data-id="${i.product_id}" data-sys="${i.quantity}" placeholder="Count"></div>`).join('')}</div><button onclick="window.saveStockTake('${locId}')" class="btn-primary">SUBMIT VARIANCE</button>`; };
 window.saveStockTake = async (locId) => { const inputs = document.querySelectorAll('.st-input'); const { data: st } = await supabase.from('stock_takes').insert({ organization_id: window.profile.organization_id, location_id: locId, conducted_by: window.profile.id, status: 'Completed' }).select().single(); const items = Array.from(inputs).map(i => ({ stock_take_id: st.id, product_id: i.getAttribute('data-id'), system_qty: i.getAttribute('data-sys'), physical_qty: i.value || 0 })); await supabase.from('stock_take_items').insert(items); document.getElementById('modal').style.display = 'none'; window.showNotification("Audit Complete", "success"); window.currentRepView = 'variance'; window.router('reports'); };
 window.viewVariance = async (id) => { const { data: items } = await supabase.from('stock_take_items').select('*, products(name)').eq('stock_take_id', id); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Variance Report</h3><table class="w-full text-xs text-left border"><thead><tr class="bg-slate-100"><th>Item</th><th>Sys</th><th>Phys</th><th>Var</th></tr></thead><tbody>${items.map(i => `<tr><td class="p-2 font-bold">${i.products.name}</td><td>${i.system_qty}</td><td>${i.physical_qty}</td><td class="${i.variance<0?'text-red-600 font-bold':''}">${i.variance}</td></tr>`).join('')}</tbody></table>`; document.getElementById('modal').style.display = 'flex'; };
-
-// 5. STAFF (DELEGATE BUTTON)
-window.renderStaff = async (c) => {
-    const { data: staff } = await supabase.from('profiles').select('*').eq('organization_id', window.profile.organization_id);
-    const { data: inv } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
-    c.innerHTML = `
-    <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase text-slate-900">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">+ INVITE</button></div>
-    <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><thead class="bg-slate-50 border-b border-slate-100"><tr><th class="p-6 text-xs text-slate-400 uppercase tracking-widest">Name & Role</th><th class="text-xs text-slate-400 uppercase tracking-widest">Contact</th><th class="text-xs text-slate-400 uppercase tracking-widest">Location</th><th class="text-xs text-slate-400 uppercase tracking-widest text-right pr-6">Action</th></tr></thead><tbody>
-    ${staff.map(s => {
-        const locName = window.cachedLocations.find(l => l.id === s.assigned_location_id)?.name || 'Unassigned';
-        return `<tr class="border-b border-slate-50 hover:bg-slate-50 transition"><td class="p-6"><button onclick="window.viewUserProfile('${s.id}')" class="text-left"><div class="font-bold text-sm uppercase text-slate-700 hover:text-blue-600 transition">${s.full_name}</div><div class="text-[10px] uppercase font-bold text-blue-600 mt-1">${s.role.replace('_',' ')}</div></button></td><td class="text-xs font-medium text-slate-600"><div>${s.phone || '-'}</div><div class="text-[10px] text-slate-400 mt-0.5">${s.email}</div></td><td class="text-xs font-bold uppercase text-slate-500">${locName}</td><td class="text-right p-6">
-            ${s.status==='suspended'?
-                `<button onclick="window.toggleUserStatus('${s.id}', 'active')" class="text-[9px] bg-green-100 text-green-800 px-3 py-1.5 rounded-full font-bold uppercase mr-2">Activate</button>`:
-                `<div class="flex justify-end gap-2">
-                    <button onclick="window.toggleUserStatus('${s.id}', 'suspended')" class="text-[9px] bg-orange-100 text-orange-800 px-3 py-1.5 rounded-full font-bold uppercase hover:bg-orange-200 transition">Suspend</button>
-                    <button onclick="window.delegateRole('${s.id}')" class="text-[9px] bg-slate-900 text-white px-3 py-1.5 rounded-full font-bold uppercase hover:bg-slate-700 transition">Delegate</button>
-                </div>`
-            }
-        </td></tr>`;
-    }).join('')}
-    ${inv.map(i => {
-        const locName = window.cachedLocations.find(l => l.id === i.assigned_location_id)?.name || 'Unassigned';
-        return `<tr class="bg-yellow-50/50 border-b border-yellow-100"><td class="p-6"><div class="font-bold text-sm text-slate-600">${i.email}</div><div class="text-[10px] uppercase font-bold text-slate-400 mt-1">${i.role.replace('_',' ')}</div></td><td class="text-xs text-slate-400 italic">Pending Acceptance</td><td class="text-xs font-bold uppercase text-slate-400">${locName}</td><td class="text-right p-6"><span class="text-[9px] bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full font-bold">PENDING</span></td></tr>`;
-    }).join('')}
-    </tbody></table></div>`;
-};
-
-window.delegateRole = (id) => {
-    window.premiumConfirm("Delegate Your Role?", "This user will gain your permissions temporarily.", "Delegate", async () => {
-        await supabase.from('delegations').insert({
-            organization_id: window.profile.organization_id,
-            delegator_id: window.profile.id,
-            delegate_id: id,
-            original_role: 'manager', 
-            temp_role: window.profile.role
-        });
-        await supabase.from('profiles').update({ role: window.profile.role }).eq('id', id);
-        window.showNotification("Role Delegated", "success");
-        window.renderStaff(document.getElementById('app-view'));
-    });
-};
