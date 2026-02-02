@@ -284,15 +284,13 @@ window.renderInventory = async function(c) {
             const { data: pos, error: posError } = await supabase.from('purchase_orders').select('*, suppliers(name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
             if(posError) throw posError;
 
-            content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Date</th><th>Supplier</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>${(pos||[]).map(p => `<tr class="border-b hover:bg-slate-50 transition"><td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-sm font-bold uppercase">${p.suppliers?.name || 'Unknown'}</td><td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td><td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${p.status==='Pending'?'bg-yellow-100 text-yellow-700':p.status==='Partial'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}">${p.status}</span></td><td>${p.status!=='Received'?`<button onclick="window.openReceiveModal('${p.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">RECEIVE (GRN)</button>`:'<span class="text-xs text-slate-300 font-bold">DONE</span>'}</td></tr>`).join('')}</tbody></table>`;
+            content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Date</th><th>Supplier</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>${(pos||[]).map(p => `<tr class="border-b hover:bg-slate-50 transition"><td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-sm font-bold uppercase">${p.suppliers?.name || 'Unknown'}</td><td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td><td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${p.status==='Pending'?'bg-yellow-100 text-yellow-700':p.status==='Partial'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}">${p.status}</span></td><td>${p.status!=='Received'?`<button onclick="window.openReceiveModal('${p.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">RECEIVE</button>`:'<span class="text-xs text-slate-300 font-bold">DONE</span>'}</td></tr>`).join('')}</tbody></table>`;
         } else {
-            content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Item</th>${showPrice?'<th>Cost</th>':''}<th>Store</th><th>Stock</th><th>Action</th></tr></thead><tbody>${filteredStock.map(i => `<tr class="border-b hover:bg-slate-50 transition group"><td class="py-4 pl-4"><div class="font-bold text-sm uppercase">${i.products?.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase mt-0.5">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td>`:''} <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td><td class="flex gap-2 p-4 justify-end">${window.profile.role!=='barman'?`<button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-900 hover:text-white transition">MOVE</button>`:''}${canAdjust?`<button onclick="window.openStockEdit('${i.id}', '${i.quantity}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100 transition">EDIT</button><button onclick="window.requestDeleteProduct('${i.products.id}')" class="text-[10px] font-bold border px-2 py-1 rounded hover:bg-red-50 text-red-500 transition">DEL</button>`:''}</td></tr>`).join('')}</tbody></table>`;
+            content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Item</th>${showPrice?'<th>Cost</th>':''}<th>Store</th><th>Stock</th><th>Action</th></tr></thead><tbody>${stock.map(i => `<tr class="border-b hover:bg-slate-50 transition group"><td class="py-4 pl-4"><div class="font-bold text-sm uppercase">${i.products?.name}</div><div class="text-[10px] text-slate-400 font-bold uppercase mt-0.5">${i.products?.category}</div></td>${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products.cost_price)}</td>`:''} <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name}</td><td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit}</span></td><td class="flex gap-2 p-4 justify-end"><button onclick="window.issueModal('${i.products.name}','${i.product_id}','${i.location_id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-900 hover:text-white transition">MOVE</button></td></tr>`).join('')}</tbody></table>`;
         }
 
         c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>${showPrice?window.getCurrencySelectorHTML():''}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-xl"><button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button><button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button></div><div class="flex gap-3">${canCreateLPO?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div></div><div class="bg-white rounded-3xl border shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
-    } catch (e) {
-        handleError(e, "Render Inventory");
-    }
+    } catch (e) { handleError(e, "Render Inventory"); }
 };
 
 window.createPOModal = async function() {
@@ -311,23 +309,15 @@ window.createPOModal = async function() {
             </div>
             <button onclick="window.execCreatePO()" class="btn-primary w-full">GENERATE ORDER</button>`;
         document.getElementById('modal').style.display = 'flex';
-    } catch(e) {
-        handleError(e, "Create PO Modal");
-    }
+    } catch(e) { handleError(e, "Create PO Modal"); }
 };
-
 window.execCreatePO = async function() {
     try {
         const supSelect = document.getElementById('lpoSup');
         const items = []; let total = 0;
-        document.querySelectorAll('.lpo-check:checked').forEach(c => {
-            const qty = document.getElementById(`qty-${c.value}`).value;
-            if(qty > 0) { total += (qty * c.dataset.price); items.push({ product_id: c.value, quantity: qty, unit_cost: c.dataset.price, received_qty: 0 }); }
-        });
+        document.querySelectorAll('.lpo-check:checked').forEach(c => { const qty = document.getElementById(`qty-${c.value}`).value; if(qty > 0) { total += (qty * c.dataset.price); items.push({ product_id: c.value, quantity: qty, unit_cost: c.dataset.price, received_qty: 0 }); } });
         if(!items.length) return window.showNotification("Select items & qty", "error");
-
-        const poData = { organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_id: supSelect.value, supplier_name: supSelect.options[supSelect.selectedIndex].text, total_cost: total, status: 'Pending' };
-        const { data: po, error } = await supabase.from('purchase_orders').insert(poData).select().single();
+        const { data: po, error } = await supabase.from('purchase_orders').insert({ organization_id: window.profile.organization_id, created_by: window.profile.id, supplier_id: supSelect.value, supplier_name: supSelect.options[supSelect.selectedIndex].text, total_cost: total, status: 'Pending' }).select().single();
         if(error) throw error;
         await supabase.from('po_items').insert(items.map(i => ({...i, po_id: po.id})));
 
@@ -351,19 +341,16 @@ window.openReceiveModal = async function(poId) {
             if(rem <= 0) return '';
             return `<div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded border"><div class="w-1/2"><span class="block text-xs font-bold uppercase">${i.products?.name || 'Unknown'}</span><span class="text-[10px] text-slate-500">Ord: ${i.quantity} | Rec: ${i.received_qty}</span></div><div class="w-1/2 flex justify-end gap-2"><span class="text-[10px] font-bold mt-2">Now:</span><input type="number" class="rec-inp w-20 input-field text-center text-blue-600 font-bold" data-id="${i.id}" data-pid="${i.product_id}" data-cost="${i.unit_cost}" max="${rem}" placeholder="${rem}"></div></div>`;
         }).join('');
-
         if(!itemRows) return window.showNotification("Fully Received", "success");
-
         document.getElementById('modal-content').innerHTML = `
             <h3 class="font-bold text-lg mb-4 text-center">Receive Stock (GRN)</h3>
             <div class="mb-6 max-h-[300px] overflow-y-auto">${itemRows}</div>
             <button onclick="window.execReceivePO('${poId}')" class="btn-primary w-full bg-blue-600">CONFIRM RECEIPT</button>`;
         document.getElementById('modal').style.display = 'flex';
-    } catch (e) {
-        handleError(e, "Open Receive Modal");
-    }
+    } catch (e) { handleError(e, "Open Receive Modal"); }
 };
 
+// RPC for Receiving Stock (using new rebuild logic)
 window.execReceivePO = async function(poId) {
     const items = [];
     document.querySelectorAll('.rec-inp').forEach(i => { 
@@ -556,7 +543,7 @@ window.renderStaff = async function(c) {
             </tr>`).join('');
 
         c.innerHTML = `
-        <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
+        <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.openInviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
         <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8">
             <table class="w-full text-left">
                 <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead>
@@ -631,20 +618,13 @@ window.execInvite = async function() {
 
 window.viewStaffDetails = async function(id) {
     try {
-        const [logs, p] = await Promise.all([
-            supabase.from('audit_logs').select('*').eq('user_id', id).order('created_at', {ascending: false}).limit(20),
-            supabase.from('profiles').select('*, locations(name)').eq('id', id).single()
-        ]);
-        if (logs.error) throw logs.error;
-        if (p.error) throw p.error;
-
-        const logData = logs.data || [];
-        const prof = p.data;
-        document.getElementById('modal-content').innerHTML = `
-            <div class="text-center mb-6">
-                <h3 class="font-bold text-xl">${prof.full_name}</h3>
-                <p class="text-xs text-slate-500">${prof.email} | ${prof.phone || 'N/A'}</p>
-                <span class="inline-block mt-2 px-3 py-1 bg-slate-100 rounded-full text-xs font-bold uppercase">${prof.role.replace('_', ' ')}</span>
+        // Log reading logic - Human Readable
+        const { data: logs } = await supabase.from('audit_logs').select('*').eq('user_id', id).order('created_at', {ascending: false}).limit(20);
+        document.getElementById('activity-list').innerHTML = logs.map(l => `
+            <div class="text-[10px] border-b border-slate-200 py-2">
+                <span class="font-bold text-slate-700">${l.action}</span>
+                <span class="block text-slate-500 italic">${l.description || 'No details'}</span>
+                <span class="block text-slate-400 text-[9px]">${new Date(l.created_at).toLocaleString()}</span>
             </div>
             <h4 class="text-xs font-bold uppercase text-slate-400 mb-4">Activity History</h4>
             <div class="bg-slate-50 p-4 rounded-xl border max-h-[300px] overflow-y-auto custom-scrollbar">
@@ -656,10 +636,8 @@ window.viewStaffDetails = async function(id) {
 
 window.renderReports = async function(c) {
     try {
-        const isVariance = window.currentRepView === 'variance';
-        if(isVariance) {
-            const { data: takes, error: takeError } = await supabase.from('stock_takes').select('*, locations(name), profiles(full_name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
-            if (takeError) throw takeError;
+        const { data: logs } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(500);
+        window.currentLogs = logs || [];
 
             c.innerHTML = `<div class="flex justify-between mb-8"><h1 class="text-3xl font-bold uppercase">Reconciliation</h1><div class="flex gap-2"><button onclick="window.currentRepView='general';window.router('reports')" class="px-4 py-2 border rounded">General</button><button class="px-4 py-2 bg-slate-900 text-white rounded">Variance</button></div><button onclick="window.newStockTakeModal()" class="btn-primary w-auto px-4">NEW AUDIT</button></div><table class="w-full text-left"><thead><tr class="bg-slate-50"><th class="p-4">Date</th><th>Location</th><th>Auditor</th><th>Action</th></tr></thead><tbody>${(takes||[]).map(t=>`<tr><td class="p-4">${new Date(t.created_at).toLocaleDateString()}</td><td>${t.locations?.name}</td><td>${t.profiles?.full_name}</td><td><button onclick="window.viewVariance('${t.id}')" class="text-blue-600 font-bold">VIEW</button></td></tr>`).join('')}</tbody></table>`;
         } else {

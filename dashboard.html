@@ -10,36 +10,36 @@
         body { font-family: 'Inter', sans-serif; background-color: #F1F5F9; color: #0F172A; }
         .nav-active { background-color: #0F172A !important; color: #FFFFFF !important; box-shadow: 0 4px 20px rgba(15, 23, 42, 0.2); }
         .nav-item:hover { background-color: #E2E8F0; color: #0F172A; }
-        ::-webkit-scrollbar { width: 6px; height: 6px; } 
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-thumb { background: #94A3B8; border-radius: 10px; }
-        
+
         /* 🔥 WORLD CLASS MODALS */
-        #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer, #amend-modal, #deputy-modal, #partial-receive-modal, #stock-edit-modal, #price-modal { display: none; }
-        
-        .modal-backdrop { 
+        #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer, #amend-modal, #deputy-modal, #partial-receive-modal, #stock-edit-modal, #price-modal, #invite-modal { display: none; }
+
+        .modal-backdrop {
             background-color: rgba(2, 6, 23, 0.85); /* Heavy Dark */
             backdrop-filter: blur(12px); /* Strong Blur */
-            position: fixed; inset: 0; z-index: 9999; 
+            position: fixed; inset: 0; z-index: 9999;
             display: flex; align-items: center; justify-content: center; padding: 1rem;
         }
-        
-        .modal-box { 
-            background: #FFFFFF; width: 100%; max-width: 550px; 
-            border-radius: 24px; padding: 32px; 
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); 
+
+        .modal-box {
+            background: #FFFFFF; width: 100%; max-width: 550px;
+            border-radius: 24px; padding: 32px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
             animation: modalSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
             max-height: 90vh; overflow-y: auto;
         }
-        
-        @keyframes modalSlide { 
-            0% { transform: translateY(20px) scale(0.95); opacity: 0; } 
-            100% { transform: translateY(0) scale(1); opacity: 1; } 
+
+        @keyframes modalSlide {
+            0% { transform: translateY(20px) scale(0.95); opacity: 0; }
+            100% { transform: translateY(0) scale(1); opacity: 1; }
         }
 
         .input-label { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #64748B; letter-spacing: 0.05em; margin-bottom: 8px; display: block; }
         .input-field { border: 1px solid #CBD5E1; padding: 14px 16px; border-radius: 12px; width: 100%; outline: none; transition: all 0.2s; background: #F8FAFC; font-weight: 600; font-size: 14px; color: #0F172A; }
         .input-field:focus { border-color: #0F172A; background: #FFF; box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.1); }
-        
+
         .btn-primary { background: #0F172A; color: #fff; padding: 16px; border-radius: 14px; font-weight: 700; width: 100%; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; transition: 0.2s; }
         .btn-primary:hover { background: #1E293B; transform: translateY(-1px); box-shadow: 0 10px 20px rgba(15, 23, 42, 0.15); }
         .btn-danger { background: #DC2626; color: white; } .btn-danger:hover { background: #B91C1C; }
@@ -90,12 +90,45 @@
         <div id="app-view" class="flex-1 overflow-y-auto p-6 md:p-12 pb-32 w-full max-w-7xl mx-auto"></div>
     </main>
 
+    <!-- 🔥 STATIC INVITE MODAL (FIXED ID ISSUE) -->
+    <div id="invite-modal" class="modal-backdrop">
+        <div class="modal-box">
+            <h3 class="font-bold text-xl mb-6 text-slate-900 text-center">Invite Staff</h3>
+            <div class="input-group mb-6">
+                <label class="input-label">Email Address</label>
+                <input id="invite-email" type="email" class="input-field" placeholder="staff@company.com">
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="input-group">
+                    <label class="input-label">Role</label>
+                    <select id="invite-role" class="input-field" onchange="window.toggleLocSelect(this.value)">
+                        <option value="storekeeper">Storekeeper</option>
+                        <option value="deputy_storekeeper">Deputy Storekeeper</option>
+                        <option value="barman">Barman</option>
+                        <option value="finance">Finance</option>
+                        <option value="deputy_finance">Deputy Finance</option>
+                        <option value="financial_controller">Financial Controller</option>
+                        <option value="deputy_manager">Deputy Manager</option>
+                    </select>
+                </div>
+                <div class="input-group" id="invite-loc-div">
+                    <label class="input-label">Assign To</label>
+                    <select id="invite-location-select" class="input-field"></select>
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="document.getElementById('invite-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
+                <button onclick="window.execInvite()" class="btn-primary">Send Invitation</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- OTHER DYNAMIC MODALS -->
     <div id="modal" class="modal-backdrop" onclick="window.closeModalOutside(event)"><div class="modal-box" id="modal-content" onclick="event.stopPropagation()"></div></div>
-    
+
     <div id="price-modal" class="modal-backdrop">
         <div class="modal-box text-center">
             <h3 class="font-bold text-xl mb-2 text-slate-900">Location Pricing</h3>
-            <p class="text-sm text-slate-500 mb-6">Set selling price for each location.</p>
             <div id="price-list" class="space-y-4 mb-6 max-h-60 overflow-y-auto text-left"></div>
             <div class="flex gap-3">
                 <button onclick="document.getElementById('price-modal').style.display='none'" class="btn-primary btn-outline">Back</button>
@@ -134,18 +167,6 @@
             <div class="flex gap-3 mt-6">
                 <button onclick="document.getElementById('stock-edit-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
                 <button onclick="window.execStockRequest()" class="btn-primary">Submit Request</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="deputy-modal" class="modal-backdrop">
-        <div class="modal-box text-center">
-            <h3 class="font-bold text-xl mb-2 text-slate-900">Appoint Deputy</h3>
-            <p class="text-sm text-slate-500 mb-6">Invite a "Second Master" to assist.</p>
-            <div class="input-group text-left"><label class="input-label">Deputy Email</label><input id="depEmail" class="input-field" placeholder="deputy@company.com"></div>
-            <div class="flex gap-3 mt-6">
-                <button onclick="document.getElementById('deputy-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
-                <button onclick="window.executeAppointDeputy()" class="btn-primary">Send Invite</button>
             </div>
         </div>
     </div>
