@@ -227,7 +227,7 @@ END;
 $$;
 
 -- B. RECEIVE STOCK (LPO Status Logic)
-CREATE OR REPLACE FUNCTION public.receive_stock_complete(
+CREATE OR REPLACE FUNCTION public.receive_stock_partial(
     p_po_id UUID,
     p_items JSONB, -- [{po_item_id, qty, product_id}]
     p_user_id UUID,
@@ -261,7 +261,7 @@ BEGIN
         VALUES ((SELECT organization_id FROM public.purchase_orders WHERE id=p_po_id), p_user_id, 'RECEIVE_STOCK', format('Received %s units for PO %s', item->>'qty', p_po_id));
     END LOOP;
 
-    -- 4. Check Status
+    -- 4. Check Status (The Fix)
     SELECT SUM(quantity), SUM(received_qty) INTO v_total_ord, v_total_rec FROM public.po_items WHERE po_id = p_po_id;
 
     IF v_total_rec >= v_total_ord THEN
