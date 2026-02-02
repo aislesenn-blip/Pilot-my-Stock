@@ -181,51 +181,44 @@ window.onload = async function() {
         await window.initCurrency();
 
         // ==========================================================
-        // 🔥 STRICT SEPARATION OF POWERS (HII NDIO LOGIC KUU) 🔥
+        // 🔥 STRICT SEPARATION OF POWERS (DASHBOARD VISIBILITY) 🔥
         // ==========================================================
         const role = window.profile.role;
-        
-        // Define EXACTLY what each role can see (IDs of Navigation Buttons)
-        const ROLE_ACCESS = {
-            // ADMINS (Full Access)
-            'manager': ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
-            'deputy_manager': ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
-            
-            // FINANCE (Controls & Reports - NO POS)
-            'financial_controller': ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
-            'finance': ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
-            'deputy_finance': ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff'],
+        const allNavs = ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
+        let allowedNavs = [];
 
-            // STORES (Inventory & Reports - NO Settings/Staff/POS)
-            'storekeeper': ['nav-inventory', 'nav-reports'],
-            'overall_storekeeper': ['nav-inventory', 'nav-reports', 'nav-approvals'], // Can request/view approvals
-            'deputy_storekeeper': ['nav-inventory', 'nav-reports'],
+        // 1. ADMINS (Manager / Deputy Manager)
+        if (['manager', 'deputy_manager'].includes(role)) {
+            allowedNavs = allNavs; // See everything
+        }
+        // 2. FINANCE (Controller / Finance) - NO POS
+        else if (['financial_controller', 'finance', 'deputy_finance'].includes(role)) {
+            allowedNavs = ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
+        }
+        // 3. STOREKEEPER (Main & Camp) - Inventory & Reports ONLY
+        else if (['overall_storekeeper', 'deputy_storekeeper', 'storekeeper'].includes(role)) {
+            allowedNavs = ['nav-inventory', 'nav-reports', 'nav-approvals']; // Approvals only for viewing requests
+        }
+        // 4. BARMAN - POS ONLY
+        else if (role === 'barman') {
+            allowedNavs = ['nav-bar'];
+        }
 
-            // BAR (POS ONLY)
-            'barman': ['nav-bar'] 
-        };
-
-        const allowedNavs = ROLE_ACCESS[role] || [];
-
-        // Apply Visibility (Hide unauthorized buttons completely)
-        const allPossibleNavs = ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
-        allPossibleNavs.forEach(navId => {
+        // HIDE UNAUTHORIZED SECTIONS COMPLETELY
+        allNavs.forEach(navId => {
             const el = document.getElementById(navId);
-            if(el) {
-                if(allowedNavs.includes(navId)) {
-                    el.style.display = 'flex'; // Show allowed
+            if (el) {
+                if (allowedNavs.includes(navId)) {
+                    el.style.display = 'flex'; // Enable
                 } else {
-                    el.style.display = 'none'; // Hide forbidden
+                    el.style.display = 'none'; // Completely Hide
                 }
             }
         });
 
-        // Force Route (Usimpeleke Barman kwenye Inventory)
-        if (role === 'barman') {
-            window.router('bar');
-        } else {
-            window.router('inventory');
-        }
+        // Set Default Route based on Role
+        if (role === 'barman') window.router('bar');
+        else window.router('inventory');
 
     } catch (e) {
         handleError(e, "Init Error");
@@ -243,13 +236,6 @@ window.router = async function(view) {
 
     setTimeout(async () => {
         try {
-            // Permission Check inside Router (Double Security)
-            const role = window.profile.role;
-            if (view === 'bar' && role !== 'barman' && !['manager', 'deputy_manager'].includes(role)) {
-                // If Finance tries to access POS, block them
-                // But allow Manager/Barman
-            }
-
             if (view === 'inventory') await window.renderInventory(app);
             else if (view === 'bar') await window.renderBar(app);
             else if (view === 'approvals') await window.renderApprovals(app);
@@ -490,7 +476,7 @@ window.doCheckout = async function() {
 // ============================================================================
 window.renderApprovals = async function(c) {
     try {
-        if(['storekeeper', 'barman', 'deputy_storekeeper'].includes(window.profile.role)) return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
+        if(window.profile.role === 'storekeeper' || window.profile.role === 'barman') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
         
         const reqs = await getPendingApprovals(window.profile.organization_id);
         const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
@@ -610,12 +596,18 @@ window.toggleLocSelect = function(role) {
     document.getElementById('locDiv').style.display = noLocRoles.includes(role) ? 'none' : 'block';
 };
 
+// FIX: Logic for sending CORRECT location ID (Not Null for barman/storekeeper)
 window.execInvite = async function() {
     try {
         const email = document.getElementById('iE').value;
         const role = document.getElementById('iR').value;
         const noLocRoles = ['finance', 'deputy_finance', 'financial_controller', 'manager', 'deputy_manager'];
-        const loc = noLocRoles.includes(role) ? null : document.getElementById('iL').value;
+        
+        let loc = null;
+        if (!noLocRoles.includes(role)) {
+            loc = document.getElementById('iL').value; // Get Selected ID
+            if (!loc) return window.showNotification("Location is required for this role", "error");
+        }
         
         if(!email) return window.showNotification("Email required", "error");
 
@@ -623,7 +615,7 @@ window.execInvite = async function() {
             organization_id: window.profile.organization_id, 
             email, 
             role, 
-            assigned_location_id: loc, 
+            assigned_location_id: loc, // Sends correct ID now
             status: 'pending' 
         });
         
