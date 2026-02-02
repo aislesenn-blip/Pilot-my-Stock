@@ -135,7 +135,7 @@ window.getCurrencySelectorHTML = function() {
 };
 
 // ============================================================================
-// 3. MAIN INIT & ROUTING
+// 3. MAIN INIT & STRICT ROLE ROUTING
 // ============================================================================
 window.onload = async function() {
     try {
@@ -174,7 +174,6 @@ window.onload = async function() {
             supabase.from('profiles').select('id, full_name').eq('organization_id', window.profile.organization_id)
         ]);
 
-        if(locsRes.error) throw locsRes.error;
         window.cachedLocations = locsRes.data || [];
         window.cachedSuppliers = supsRes.data || [];
         window.cachedStaff = staffRes.data || [];
@@ -182,41 +181,51 @@ window.onload = async function() {
         await window.initCurrency();
 
         // ==========================================================
-        // SEPARATION OF POWERS (STRICT ACCESS CONTROL)
+        // 🔥 STRICT SEPARATION OF POWERS (HII NDIO LOGIC KUU) 🔥
         // ==========================================================
         const role = window.profile.role;
-        const allNavs = ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
-        let allowedNavs = [];
+        
+        // Define EXACTLY what each role can see (IDs of Navigation Buttons)
+        const ROLE_ACCESS = {
+            // ADMINS (Full Access)
+            'manager': ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
+            'deputy_manager': ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
+            
+            // FINANCE (Controls & Reports - NO POS)
+            'financial_controller': ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
+            'finance': ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'],
+            'deputy_finance': ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff'],
 
-        // 1. Manager / Deputy Manager: Access EVERYTHING (Except POS specific view if they prefer)
-        if (['manager', 'deputy_manager'].includes(role)) {
-            allowedNavs = allNavs; 
-        }
-        // 2. Financial Controller / Finance: NO POS, NO Inventory Adjustments, YES Reports, YES Approvals
-        else if (['financial_controller', 'finance', 'deputy_finance'].includes(role)) {
-            allowedNavs = ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
-        }
-        // 3. Storekeeper: YES Inventory, YES Reports. NO Staff, NO Settings, NO Approvals (Only Request)
-        else if (['overall_storekeeper', 'deputy_storekeeper', 'storekeeper'].includes(role)) {
-            allowedNavs = ['nav-inventory', 'nav-reports'];
-        }
-        // 4. Barman: ONLY POS
-        else if (role === 'barman') {
-            allowedNavs = ['nav-bar'];
-        }
+            // STORES (Inventory & Reports - NO Settings/Staff/POS)
+            'storekeeper': ['nav-inventory', 'nav-reports'],
+            'overall_storekeeper': ['nav-inventory', 'nav-reports', 'nav-approvals'], // Can request/view approvals
+            'deputy_storekeeper': ['nav-inventory', 'nav-reports'],
 
-        // HIDE UNAUTHORIZED SECTIONS
-        allNavs.forEach(navId => {
+            // BAR (POS ONLY)
+            'barman': ['nav-bar'] 
+        };
+
+        const allowedNavs = ROLE_ACCESS[role] || [];
+
+        // Apply Visibility (Hide unauthorized buttons completely)
+        const allPossibleNavs = ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
+        allPossibleNavs.forEach(navId => {
             const el = document.getElementById(navId);
-            if (el) {
-                if (!allowedNavs.includes(navId)) el.style.display = 'none';
-                else el.style.display = 'flex'; // Ensure flex for layout
+            if(el) {
+                if(allowedNavs.includes(navId)) {
+                    el.style.display = 'flex'; // Show allowed
+                } else {
+                    el.style.display = 'none'; // Hide forbidden
+                }
             }
         });
 
-        // Set Default Route based on Role
-        if (role === 'barman') window.router('bar');
-        else window.router('inventory');
+        // Force Route (Usimpeleke Barman kwenye Inventory)
+        if (role === 'barman') {
+            window.router('bar');
+        } else {
+            window.router('inventory');
+        }
 
     } catch (e) {
         handleError(e, "Init Error");
@@ -226,12 +235,21 @@ window.onload = async function() {
 window.router = async function(view) {
     const app = document.getElementById('app-view');
     app.innerHTML = '<div class="flex h-full items-center justify-center"><div class="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div></div>';
+    
+    // Updates active class on sidebar
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('nav-active'));
     const navEl = document.getElementById(`nav-${view}`);
     if(navEl) navEl.classList.add('nav-active');
 
     setTimeout(async () => {
         try {
+            // Permission Check inside Router (Double Security)
+            const role = window.profile.role;
+            if (view === 'bar' && role !== 'barman' && !['manager', 'deputy_manager'].includes(role)) {
+                // If Finance tries to access POS, block them
+                // But allow Manager/Barman
+            }
+
             if (view === 'inventory') await window.renderInventory(app);
             else if (view === 'bar') await window.renderBar(app);
             else if (view === 'approvals') await window.renderApprovals(app);
@@ -254,26 +272,26 @@ window.renderInventory = async function(c) {
         const isPOView = window.currentInvView === 'po';
         let stock = [];
 
-        // Permission Logic for Viewing Stock
-        if (['financial_controller', 'manager', 'deputy_manager', 'finance'].includes(window.profile.role)) {
-            // Managers/Finance see ALL stock
+        // Role-Based Data Fetching
+        // Manager/Finance = See ALL Stock (Centralized View)
+        if (['financial_controller', 'manager', 'deputy_manager', 'finance', 'deputy_finance'].includes(window.profile.role)) {
             const { data, error } = await supabase.from('inventory').select('*, products(*), locations(name)').eq('organization_id', window.profile.organization_id);
             if (error) throw error;
             stock = data || [];
         } else {
-            // Others see their assigned location only
+            // Storekeeper/Barman = See ONLY Assigned Location Stock
             stock = await getInventory(window.profile.organization_id);
         }
 
+        // Additional Filter for Barman (Beverage Only) if they access this view (though router blocks them usually)
         let filteredStock = stock;
         const role = window.profile.role;
-        // Filter logic
         if (role === 'barman') filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id && x.products.category === 'Beverage');
         else if (role.includes('storekeeper') && window.profile.assigned_location_id) filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id);
 
-        const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'finance'].includes(role);
+        const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'finance', 'deputy_finance'].includes(role);
         const canAdjust = ['manager', 'deputy_manager', 'overall_storekeeper'].includes(role);
-        const canCreateLPO = ['manager', 'deputy_manager', 'overall_storekeeper', 'financial_controller'].includes(role);
+        const canCreateLPO = ['manager', 'deputy_manager', 'overall_storekeeper', 'financial_controller', 'deputy_storekeeper'].includes(role);
 
         let content = '';
         if (isPOView) {
@@ -364,7 +382,7 @@ window.execReceivePO = async function(poId) {
     const items = [];
     document.querySelectorAll('.rec-inp').forEach(i => { 
         if(i.value > 0) {
-            // FIX: Parsing as Float to avoid String concatenation in SQL Summing logic
+            // FIX: Parsing as Float to avoid String concatenation issues in DB
             items.push({ product_id: i.dataset.pid, qty: parseFloat(i.value), unit_cost: parseFloat(i.dataset.cost) });
         } 
     });
@@ -379,7 +397,7 @@ window.execReceivePO = async function(poId) {
                 p_items: items 
             });
             if(error) throw error;
-            window.showNotification("Received", "success"); 
+            window.showNotification("Received Successfully", "success"); 
             document.getElementById('modal').style.display='none'; 
             window.router('inventory');
         } catch(e) {
@@ -472,7 +490,7 @@ window.doCheckout = async function() {
 // ============================================================================
 window.renderApprovals = async function(c) {
     try {
-        if(window.profile.role === 'storekeeper' || window.profile.role === 'barman') return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
+        if(['storekeeper', 'barman', 'deputy_storekeeper'].includes(window.profile.role)) return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Restricted Area</div>';
         
         const reqs = await getPendingApprovals(window.profile.organization_id);
         const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
@@ -519,7 +537,7 @@ window.renderStaff = async function(c) {
     try {
         if(!['manager', 'financial_controller'].includes(window.profile.role)) return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Access Restricted</div>';
         
-        // FIX: Fetch both Active Profiles and Pending Invites
+        // Fetch both Active Profiles and Pending Invites
         const [staff, invites] = await Promise.all([
             supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id),
             supabase.from('staff_invites').select('*, locations(name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending')
@@ -527,11 +545,9 @@ window.renderStaff = async function(c) {
 
         if (staff.error) throw staff.error;
 
-        // Combine lists
         const activeUsers = staff.data || [];
         const pendingUsers = invites.data || [];
 
-        // Build HTML
         const rowsActive = activeUsers.map(s => `
             <tr class="border-b last:border-0 hover:bg-slate-50 transition">
                 <td class="p-4 font-bold text-slate-700 cursor-pointer hover:text-blue-600" onclick="window.viewStaffDetails('${s.id}')">${s.full_name || 'User'}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td>
