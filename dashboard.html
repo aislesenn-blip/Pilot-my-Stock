@@ -13,12 +13,11 @@
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-thumb { background: #94A3B8; border-radius: 10px; }
 
-        /* 🔥 WORLD CLASS MODALS */
         #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer, #amend-modal, #deputy-modal, #partial-receive-modal, #stock-edit-modal, #price-modal, #invite-modal { display: none; }
 
         .modal-backdrop {
-            background-color: rgba(2, 6, 23, 0.85); /* Heavy Dark */
-            backdrop-filter: blur(12px); /* Strong Blur */
+            background-color: rgba(2, 6, 23, 0.85);
+            backdrop-filter: blur(12px);
             position: fixed; inset: 0; z-index: 9999;
             display: flex; align-items: center; justify-content: center; padding: 1rem;
         }
@@ -27,13 +26,7 @@
             background: #FFFFFF; width: 100%; max-width: 550px;
             border-radius: 24px; padding: 32px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-            animation: modalSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
             max-height: 90vh; overflow-y: auto;
-        }
-
-        @keyframes modalSlide {
-            0% { transform: translateY(20px) scale(0.95); opacity: 0; }
-            100% { transform: translateY(0) scale(1); opacity: 1; }
         }
 
         .input-label { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #64748B; letter-spacing: 0.05em; margin-bottom: 8px; display: block; }
@@ -44,8 +37,6 @@
         .btn-primary:hover { background: #1E293B; transform: translateY(-1px); box-shadow: 0 10px 20px rgba(15, 23, 42, 0.15); }
         .btn-danger { background: #DC2626; color: white; } .btn-danger:hover { background: #B91C1C; }
         .btn-outline { border: 1px solid #E2E8F0; color: #475569; background: white; } .btn-outline:hover { background: #F8FAFC; }
-
-        .tab-active { border-bottom: 3px solid #0F172A; color: #0F172A; font-weight: 800; }
     </style>
 </head>
 
@@ -58,24 +49,12 @@
             <button id="close-sidebar" class="md:hidden text-slate-400 hover:text-red-600 p-2"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
         </div>
         <nav class="flex-1 px-4 space-y-2 overflow-y-auto py-6" id="menu">
-            <button onclick="window.router('inventory')" id="nav-inventory" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg> Inventory
-            </button>
-            <button onclick="window.router('bar')" id="nav-bar" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg> POS Terminal
-            </button>
-            <button onclick="window.router('approvals')" id="nav-approvals" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Approvals
-            </button>
-            <button onclick="window.router('reports')" id="nav-reports" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Reports
-            </button>
-            <button onclick="window.router('staff')" id="nav-staff" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg> Team
-            </button>
-            <button onclick="window.router('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg> Settings
-            </button>
+            <button onclick="window.router('inventory')" id="nav-inventory" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">Inventory</button>
+            <button onclick="window.router('bar')" id="nav-bar" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">POS Terminal</button>
+            <button onclick="window.router('approvals')" id="nav-approvals" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">Approvals</button>
+            <button onclick="window.router('reports')" id="nav-reports" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">Reports</button>
+            <button onclick="window.router('staff')" id="nav-staff" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">Team</button>
+            <button onclick="window.router('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-4 px-5 py-4 rounded-xl text-slate-500 transition font-bold text-xs uppercase tracking-wide">Settings</button>
         </nav>
         <div class="p-8 border-t border-slate-100">
             <button onclick="window.logoutAction()" class="w-full text-xs font-bold text-slate-400 hover:text-red-600 uppercase tracking-widest transition flex items-center justify-center gap-2">Sign Out</button>
@@ -90,7 +69,26 @@
         <div id="app-view" class="flex-1 overflow-y-auto p-6 md:p-12 pb-32 w-full max-w-7xl mx-auto"></div>
     </main>
 
-    <!-- 🔥 STATIC INVITE MODAL (FIXED ID ISSUE) -->
+    <!-- REPORT FILTERS TEMPLATE (Hidden, used by JS) -->
+    <template id="report-filters-template">
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm mb-8">
+            <h3 class="font-bold text-sm uppercase text-slate-400 mb-4 tracking-widest">Report Filters</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 items-end">
+                <div><label class="input-label">Date From</label><input type="date" id="rStart" class="input-field py-2 text-xs" onchange="window.filterReport()"></div>
+                <div><label class="input-label">Date To</label><input type="date" id="rEnd" class="input-field py-2 text-xs" onchange="window.filterReport()"></div>
+                <div><label class="input-label">Location</label><select id="rLoc" class="input-field py-2 text-xs" onchange="window.filterReport()"><option value="all">All</option></select></div>
+                <div><label class="input-label">Department</label><select id="rDept" class="input-field py-2 text-xs" onchange="window.filterReport()"><option value="all">All</option><option value="main_store">Main Store</option><option value="bar">Bar</option><option value="kitchen">Kitchen</option></select></div>
+                <div><label class="input-label">Staff</label><select id="rStaff" class="input-field py-2 text-xs" onchange="window.filterReport()"><option value="all">All</option></select></div>
+                <div><label class="input-label">Category</label><select id="rCat" class="input-field py-2 text-xs" onchange="window.filterReport()"><option value="all">All</option></select></div>
+                <div><label class="input-label">Type</label><select id="rType" class="input-field py-2 text-xs" onchange="window.filterReport()"><option value="all">All</option><option value="sale">Sale</option><option value="transfer">Transfer</option><option value="receive">Receive</option><option value="void">Void</option></select></div>
+                <div><label class="input-label">Pay Mode</label><select id="rPay" class="input-field py-2 text-xs" onchange="window.filterReport()"><option value="all">All</option><option value="Cash">Cash</option><option value="Mobile">Mobile</option><option value="Card">Card</option></select></div>
+                <div><label class="input-label">Item Search</label><input id="rSearch" placeholder="Product Name..." class="input-field py-2 text-xs" onkeyup="window.filterReport()"></div>
+                <div><button onclick="window.exportCSV()" class="btn-primary py-2 text-xs bg-green-600 hover:bg-green-700">Export CSV</button></div>
+            </div>
+        </div>
+    </template>
+
+    <!-- INVITE MODAL (FIXED) -->
     <div id="invite-modal" class="modal-backdrop">
         <div class="modal-box">
             <h3 class="font-bold text-xl mb-6 text-slate-900 text-center">Invite Staff</h3>
@@ -123,63 +121,16 @@
         </div>
     </div>
 
-    <!-- OTHER DYNAMIC MODALS -->
+    <!-- DYNAMIC MODALS -->
     <div id="modal" class="modal-backdrop" onclick="window.closeModalOutside(event)"><div class="modal-box" id="modal-content" onclick="event.stopPropagation()"></div></div>
-
-    <div id="price-modal" class="modal-backdrop">
-        <div class="modal-box text-center">
-            <h3 class="font-bold text-xl mb-2 text-slate-900">Location Pricing</h3>
-            <div id="price-list" class="space-y-4 mb-6 max-h-60 overflow-y-auto text-left"></div>
-            <div class="flex gap-3">
-                <button onclick="document.getElementById('price-modal').style.display='none'" class="btn-primary btn-outline">Back</button>
-                <button onclick="window.finalizeProduct()" class="btn-primary">Save Product</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="partial-receive-modal" class="modal-backdrop">
-        <div class="modal-box">
-            <h3 class="font-bold text-xl mb-6 text-slate-900">Receive Stock</h3>
-            <div id="pr-items" class="space-y-4 max-h-80 overflow-y-auto mb-6"></div>
-            <div class="flex gap-3">
-                <button onclick="document.getElementById('partial-receive-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
-                <button onclick="window.execPartialReceive()" class="btn-primary">Confirm Receipt</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="stock-edit-modal" class="modal-backdrop">
-        <div class="modal-box">
-            <h3 class="font-bold text-xl mb-6 text-slate-900">Request Stock Adjustment</h3>
-            <input type="hidden" id="editInvId">
-            <div class="input-group">
-                <label class="input-label">Current System Quantity</label>
-                <input id="currentQty" class="input-field bg-slate-100" readonly>
-            </div>
-            <div class="input-group">
-                <label class="input-label">Actual Physical Quantity</label>
-                <input id="newQty" type="number" class="input-field font-bold text-lg text-blue-600">
-            </div>
-            <div class="input-group">
-                <label class="input-label">Reason for Change</label>
-                <input id="editReason" class="input-field" placeholder="e.g. Expired, Broken, Counting Error">
-            </div>
-            <div class="flex gap-3 mt-6">
-                <button onclick="document.getElementById('stock-edit-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
-                <button onclick="window.execStockRequest()" class="btn-primary">Submit Request</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="confirm-modal" class="modal-backdrop"><div class="modal-box text-center"><h3 id="confirm-title" class="text-xl font-bold text-slate-900 mb-2">Are you sure?</h3><p id="confirm-desc" class="text-sm text-slate-500 mb-8">Action irreversible.</p><div class="flex gap-3"><button onclick="document.getElementById('confirm-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button id="confirm-btn" class="btn-primary">Proceed</button></div></div></div>
-
-    <div id="supplier-modal" class="modal-backdrop"><div class="modal-box"><h3 id="supTitle" class="font-bold text-xl mb-6 text-slate-900">Supplier</h3><input type="hidden" id="supId"><div class="space-y-4"><div class="input-group"><label class="input-label">Company Name</label><input id="supName" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-4"><div class="input-group"><label class="input-label">TIN</label><input id="supTIN" class="input-field font-mono"></div><div class="input-group"><label class="input-label">Contact</label><input id="supPhone" class="input-field"></div></div><div class="input-group"><label class="input-label">Address</label><textarea id="supAddr" class="input-field h-24 resize-none"></textarea></div></div><div class="flex gap-3 mt-6"><button onclick="window.deleteSupplier()" id="btnDelSup" class="btn-primary btn-danger">Delete</button><button onclick="document.getElementById('supplier-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button onclick="window.saveSupplier()" class="btn-primary">Save</button></div></div></div>
-
-    <div id="reassign-modal" class="modal-backdrop"><div class="modal-box text-center"><h3 class="font-bold text-xl mb-2 text-slate-900">Reassign Role</h3><p class="text-sm text-slate-500 mb-6">Old user will be suspended.</p><input type="hidden" id="suspendUserId"><input type="hidden" id="suspendUserRole"><input type="hidden" id="suspendUserLoc"><div class="input-group text-left"><label class="input-label">New Email</label><input id="reassignEmail" class="input-field"></div><div class="flex gap-3 mt-6"><button onclick="document.getElementById('reassign-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button onclick="window.executeReassign()" class="btn-primary btn-danger">Reassign</button></div></div></div>
-
-    <div id="profile-viewer" class="modal-backdrop" onclick="document.getElementById('profile-viewer').style.display='none'"><div class="modal-box h-[500px] flex flex-col p-0 overflow-hidden" onclick="event.stopPropagation()"><div class="bg-slate-900 p-6 flex items-center gap-4 shrink-0"><div class="w-14 h-14 bg-white rounded-full flex items-center justify-center text-xl font-bold text-slate-900 uppercase" id="pv-initials">U</div><div class="flex-1"><h2 id="pv-name" class="text-lg font-bold text-white">Name</h2><span id="pv-role" class="text-[10px] font-bold text-blue-200 uppercase tracking-widest">Role</span></div><div id="pv-status" class="px-2 py-1 bg-white/10 rounded text-[9px] font-bold text-white uppercase">Active</div></div><div class="flex border-b border-slate-100 shrink-0"><button onclick="window.switchProfileTab('details')" id="tab-details" class="flex-1 py-4 text-xs font-bold uppercase hover:bg-slate-50 transition tab-active">Details</button><button onclick="window.switchProfileTab('activity')" id="tab-activity" class="flex-1 py-4 text-xs font-bold uppercase hover:bg-slate-50 transition">History</button></div><div class="flex-1 overflow-y-auto p-6"><div id="view-details" class="space-y-4"><div class="p-4 bg-slate-50 rounded-xl"><p class="input-label">Email</p><p id="pv-email" class="text-sm font-bold text-slate-800">email</p></div><div class="p-4 bg-slate-50 rounded-xl"><p class="input-label">Phone</p><p id="pv-phone" class="text-sm font-bold text-slate-800">-</p></div><div class="p-4 bg-slate-50 rounded-xl"><p class="input-label">Joined</p><p id="pv-joined" class="text-sm font-bold text-slate-800">-</p></div></div><div id="view-activity" class="space-y-3 hidden"><div id="activity-list"></div></div></div><div class="p-4 border-t border-slate-100 shrink-0"><button onclick="document.getElementById('profile-viewer').style.display='none'" class="btn-primary btn-outline">Close</button></div></div></div>
-
-    <div id="name-modal" class="modal-backdrop"><div class="modal-box text-center"><h2 class="text-2xl font-bold text-slate-900 mb-2">Welcome</h2><p class="text-sm text-slate-500 mb-6">Complete your profile.</p><div class="space-y-4"><input id="userNameInput" class="input-field text-center font-bold" placeholder="Full Name"><input id="userPhoneInput" class="input-field text-center font-bold" placeholder="Phone"></div><button onclick="window.saveName()" class="btn-primary mt-6">Start</button></div></div>
+    <div id="price-modal" class="modal-backdrop"><div class="modal-box text-center"><h3 class="font-bold text-xl mb-2 text-slate-900">Location Pricing</h3><div id="price-list" class="space-y-4 mb-6 max-h-60 overflow-y-auto text-left"></div><div class="flex gap-3"><button onclick="document.getElementById('price-modal').style.display='none'" class="btn-primary btn-outline">Back</button><button onclick="window.finalizeProduct()" class="btn-primary">Save Product</button></div></div></div>
+    <div id="partial-receive-modal" class="modal-backdrop"><div class="modal-box"><h3 class="font-bold text-xl mb-6 text-slate-900">Receive Stock</h3><div id="pr-items" class="space-y-4 max-h-80 overflow-y-auto mb-6"></div><div class="flex gap-3"><button onclick="document.getElementById('partial-receive-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button onclick="window.execPartialReceive()" class="btn-primary">Confirm Receipt</button></div></div></div>
+    <div id="stock-edit-modal" class="modal-backdrop"><div class="modal-box"><h3 class="font-bold text-xl mb-6 text-slate-900">Request Adjustment</h3><input type="hidden" id="editInvId"><div class="input-group"><label class="input-label">Current Qty</label><input id="currentQty" class="input-field bg-slate-100" readonly></div><div class="input-group"><label class="input-label">Actual Qty</label><input id="newQty" type="number" class="input-field font-bold text-blue-600"></div><div class="input-group"><label class="input-label">Reason</label><input id="editReason" class="input-field"></div><div class="flex gap-3 mt-6"><button onclick="document.getElementById('stock-edit-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button onclick="window.execStockRequest()" class="btn-primary">Submit</button></div></div></div>
+    <div id="confirm-modal" class="modal-backdrop"><div class="modal-box text-center"><h3 id="confirm-title" class="text-xl font-bold text-slate-900 mb-2">Confirm?</h3><p id="confirm-desc" class="text-sm text-slate-500 mb-8">Action irreversible.</p><div class="flex gap-3"><button onclick="document.getElementById('confirm-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button id="confirm-btn" class="btn-primary">Proceed</button></div></div></div>
+    <div id="supplier-modal" class="modal-backdrop"><div class="modal-box"><h3 id="supTitle" class="font-bold text-xl mb-6 text-slate-900">Supplier</h3><input type="hidden" id="supId"><div class="space-y-4"><div class="input-group"><label class="input-label">Name</label><input id="supName" class="input-field uppercase"></div><div class="grid grid-cols-2 gap-4"><div class="input-group"><label class="input-label">TIN</label><input id="supTIN" class="input-field"></div><div class="input-group"><label class="input-label">Contact</label><input id="supPhone" class="input-field"></div></div><div class="input-group"><label class="input-label">Address</label><textarea id="supAddr" class="input-field h-24 resize-none"></textarea></div></div><div class="flex gap-3 mt-6"><button onclick="window.deleteSupplier()" id="btnDelSup" class="btn-primary btn-danger">Delete</button><button onclick="document.getElementById('supplier-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button onclick="window.saveSupplier()" class="btn-primary">Save</button></div></div></div>
+    <div id="reassign-modal" class="modal-backdrop"><div class="modal-box text-center"><h3 class="font-bold text-xl mb-2 text-slate-900">Reassign Role</h3><input type="hidden" id="suspendUserId"><div class="input-group text-left"><label class="input-label">New Email</label><input id="reassignEmail" class="input-field"></div><div class="flex gap-3 mt-6"><button onclick="document.getElementById('reassign-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button><button onclick="window.executeReassign()" class="btn-primary btn-danger">Reassign</button></div></div></div>
+    <div id="profile-viewer" class="modal-backdrop" onclick="document.getElementById('profile-viewer').style.display='none'"><div class="modal-box h-[500px] flex flex-col p-0" onclick="event.stopPropagation()"><div class="bg-slate-900 p-6 flex items-center gap-4"><div class="w-14 h-14 bg-white rounded-full flex items-center justify-center font-bold text-slate-900" id="pv-initials">U</div><div class="flex-1"><h2 id="pv-name" class="text-white font-bold">Name</h2><span id="pv-role" class="text-xs text-blue-200 uppercase">Role</span></div></div><div class="flex-1 overflow-y-auto p-6" id="activity-list"></div><div class="p-4 border-t"><button onclick="document.getElementById('profile-viewer').style.display='none'" class="btn-primary btn-outline">Close</button></div></div></div>
+    <div id="name-modal" class="modal-backdrop"><div class="modal-box text-center"><h2 class="text-2xl font-bold mb-2">Welcome</h2><div class="space-y-4"><input id="userNameInput" class="input-field" placeholder="Full Name"><input id="userPhoneInput" class="input-field" placeholder="Phone"></div><button onclick="window.saveName()" class="btn-primary mt-6">Start</button></div></div>
 
     <script type="module" src="./js/app.js"></script>
     <script>
