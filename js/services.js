@@ -2,6 +2,7 @@ import { supabase } from './supabase.js';
 
 // --- INVENTORY & STOCK ---
 export async function getInventory(orgId) {
+    // Inventory table usually has simpler FKs, but if it fails, we check generic embedding
     const { data, error } = await supabase
         .from('inventory')
         .select(`
@@ -36,7 +37,6 @@ export async function createLocation(orgId, name, type, parentId = null) {
 
 // --- POS & SALES ---
 export async function processBarSale(orgId, locId, items, userId) {
-    // Items: array of { product_id, qty, price }
     let total = 0;
     let profit = 0;
 
@@ -50,7 +50,7 @@ export async function processBarSale(orgId, locId, items, userId) {
         total += lineTotal;
         profit += lineProfit;
 
-        // 2. Reduce Stock (Using RPC for safety)
+        // 2. Reduce Stock (RPC)
         const { error: stockError } = await supabase.rpc('deduct_stock', {
             p_product_id: item.product_id,
             p_location_id: locId,
@@ -75,11 +75,11 @@ export async function processBarSale(orgId, locId, items, userId) {
 
 // --- TRANSFERS & APPROVALS ---
 export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) {
-    // 1. Check stock availability
+    // 1. Check stock
     const { data: stock } = await supabase.from('inventory').select('quantity').eq('product_id', prodId).eq('location_id', fromLoc).single();
     if (!stock || stock.quantity < qty) throw new Error("Insufficient stock available for transfer");
 
-    // 2. Create Pending Transfer Request
+    // 2. Create Pending Request
     const { error } = await supabase.from('stock_movements').insert({
         organization_id: orgId,
         product_id: prodId,
@@ -94,15 +94,13 @@ export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) 
 }
 
 export async function getPendingApprovals(orgId) {
-    // HAPA CHINI NDIPO TULIPOREKEBISHA:
-    // Tunatumia majina maalum (!fk_...) ili Database isichanganyikiwe.
-    
+    // HAPA NDIPO PENYE FIX: Tunatumia majina ya SQL tuliyotengeneza sasa hivi (_fix)
     const { data, error } = await supabase.from('stock_movements')
         .select(`
             *, 
-            products!fk_stock_movements_products_final(name), 
-            from_loc:locations!fk_stock_movements_from_loc_final(name), 
-            to_loc:locations!fk_stock_movements_to_loc_final(name)
+            products!fk_products_fix(name), 
+            from_loc:locations!fk_from_loc_fix(name), 
+            to_loc:locations!fk_to_loc_fix(name)
         `)
         .eq('organization_id', orgId)
         .eq('status', 'pending');
