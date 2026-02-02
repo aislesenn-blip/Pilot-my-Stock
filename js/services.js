@@ -80,7 +80,6 @@ export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) 
     if (!stock || stock.quantity < qty) throw new Error("Insufficient stock available for transfer");
 
     // 2. Create Pending Transfer Request
-    // Trigger isiyokua na 'To Location' (Void/Adjust) itashughulikiwa na DB
     const { error } = await supabase.from('stock_movements').insert({
         organization_id: orgId,
         product_id: prodId,
@@ -95,10 +94,16 @@ export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) 
 }
 
 export async function getPendingApprovals(orgId) {
+    // HAPA CHINI NDIPO TULIPOREKEBISHA:
+    // Tunatumia majina maalum (!fk_...) ili Database isichanganyikiwe.
+    
     const { data, error } = await supabase.from('stock_movements')
-        // HAPA CHINI: Tumeiambia itumie njia maalum 'fk_stock_movements_products_final'
-        // Hii inaondoa ile error ya PGRST201 (Ambiguity)
-        .select(`*, products!fk_stock_movements_products_final(name), from_loc:from_location_id(name), to_loc:to_location_id(name)`)
+        .select(`
+            *, 
+            products!fk_stock_movements_products_final(name), 
+            from_loc:locations!fk_stock_movements_from_loc_final(name), 
+            to_loc:locations!fk_stock_movements_to_loc_final(name)
+        `)
         .eq('organization_id', orgId)
         .eq('status', 'pending');
         
@@ -110,12 +115,7 @@ export async function getPendingApprovals(orgId) {
 }
 
 export async function respondToApproval(moveId, status, userId) {
-    // status: 'approved' or 'rejected'
-    
-    // NOTE: Tumeshaweka SQL Trigger (handle_stock_approval_safe).
-    // Hivyo hapa tunaupdate status TU. Database itafanya uhamisho (Transfer/Void) yenyewe.
-    // Hatuhitaji tena kuita RPC hapa ili kuzuia kukata stock mara mbili.
-
+    // Tumeshaweka SQL Trigger. Hapa tunabadilisha status tu.
     const { error } = await supabase
         .from('stock_movements')
         .update({ 
@@ -125,7 +125,5 @@ export async function respondToApproval(moveId, status, userId) {
         .eq('id', moveId);
 
     if (error) throw error;
-
-    // Hatuhitaji ku-insert Transaction hapa kwa sababu Trigger ya SQL inafanya hivyo automatic.
     return { success: true };
 }
