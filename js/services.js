@@ -11,7 +11,6 @@ const handleError = (error, context) => {
 // --- INVENTORY & STOCK ---
 export async function getInventory(orgId) {
     try {
-        // Inventory table usually has simpler FKs, but if it fails, we check generic embedding
         const { data, error } = await supabase
             .from('inventory')
             .select(`
@@ -50,46 +49,27 @@ export async function createLocation(orgId, name, type, parentId = null) {
     }
 }
 
-// --- POS & SALES ---
-export async function processBarSale(orgId, locId, items, userId) {
+// --- POS & SALES (ATOMIC TRANSACTION RPC) ---
+export async function processBarSale(orgId, locId, items, userId, paymentMethod) {
     try {
-        let total = 0;
-        let profit = 0;
+        // Prepare items for RPC (must match JSON structure in SQL)
+        const saleItems = items.map(i => ({
+            product_id: i.product_id,
+            qty: i.qty,
+            price: i.price,
+            method: paymentMethod // Redundant but good for tracking per line if needed
+        }));
 
-        for (const item of items) {
-            // 1. Get Product Cost
-            const { data: prod, error: prodError } = await supabase.from('products').select('cost_price').eq('id', item.product_id).single();
-            if (prodError) throw prodError;
+        const { data, error } = await supabase.rpc('process_sale_transaction', {
+            p_org_id: orgId,
+            p_loc_id: locId,
+            p_user_id: userId,
+            p_items: saleItems,
+            p_method: paymentMethod
+        });
 
-            const cost = prod?.cost_price || 0;
-            const lineTotal = item.qty * item.price;
-            const lineProfit = lineTotal - (item.qty * cost);
-
-            total += lineTotal;
-            profit += lineProfit;
-
-            // 2. Reduce Stock (RPC)
-            const { error: stockError } = await supabase.rpc('deduct_stock', {
-                p_product_id: item.product_id,
-                p_location_id: locId,
-                p_quantity: item.qty
-            });
-            if (stockError) throw new Error(`Insufficient stock for item ID: ${item.product_id} - ${stockError.message}`);
-
-            // 3. Record Transaction
-            const { error: transError } = await supabase.from('transactions').insert({
-                organization_id: orgId,
-                user_id: userId,
-                product_id: item.product_id,
-                from_location_id: locId,
-                type: 'sale',
-                quantity: item.qty,
-                total_value: lineTotal,
-                profit: lineProfit
-            });
-            if (transError) throw transError;
-        }
-        return { success: true, total };
+        if (error) throw error;
+        return data; // Returns { success: true, total: ... }
     } catch (error) {
         handleError(error, "Process Sale");
         throw error;
@@ -99,7 +79,6 @@ export async function processBarSale(orgId, locId, items, userId) {
 // --- TRANSFERS & APPROVALS ---
 export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) {
     try {
-        // Validation
         if (qty <= 0) throw new Error("Quantity must be positive");
 
         // 1. Check stock
@@ -128,7 +107,6 @@ export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) 
 
 export async function getPendingApprovals(orgId) {
     try {
-        // HAPA NDIPO PENYE FIX: Tunatumia majina ya SQL tuliyotengeneza sasa hivi (_fix)
         const { data, error } = await supabase.from('stock_movements')
             .select(`
                 *,
@@ -142,14 +120,14 @@ export async function getPendingApprovals(orgId) {
         if (error) throw error;
         return data;
     } catch (error) {
-        handleError(error, "Get Approvals");
+        // Supabase sometimes errors if relation doesn't exist, we log but return empty
+        console.warn("Approvals fetch warning (check FKs):", error.message);
         return [];
     }
 }
 
 export async function respondToApproval(moveId, status, userId) {
     try {
-        // Tumeshaweka SQL Trigger. Hapa tunabadilisha status tu.
         const { error } = await supabase
             .from('stock_movements')
             .update({
