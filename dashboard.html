@@ -14,7 +14,7 @@
         ::-webkit-scrollbar-thumb { background: #94A3B8; border-radius: 10px; }
 
         /* 🔥 WORLD CLASS MODALS */
-        #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer, #amend-modal, #deputy-modal, #partial-receive-modal, #stock-edit-modal, #price-modal, #invite-modal { display: none; }
+        #modal, #name-modal, #confirm-modal, #supplier-modal, #reassign-modal, #profile-viewer, #amend-modal, #deputy-modal, #partial-receive-modal, #stock-edit-modal, #price-modal { display: none; }
 
         .modal-backdrop {
             background-color: rgba(2, 6, 23, 0.85); /* Heavy Dark */
@@ -90,45 +90,12 @@
         <div id="app-view" class="flex-1 overflow-y-auto p-6 md:p-12 pb-32 w-full max-w-7xl mx-auto"></div>
     </main>
 
-    <!-- 🔥 STATIC INVITE MODAL (FIXED ID ISSUE) -->
-    <div id="invite-modal" class="modal-backdrop">
-        <div class="modal-box">
-            <h3 class="font-bold text-xl mb-6 text-slate-900 text-center">Invite Staff</h3>
-            <div class="input-group mb-6">
-                <label class="input-label">Email Address</label>
-                <input id="invite-email" type="email" class="input-field" placeholder="staff@company.com">
-            </div>
-            <div class="grid grid-cols-2 gap-4 mb-6">
-                <div class="input-group">
-                    <label class="input-label">Role</label>
-                    <select id="invite-role" class="input-field" onchange="window.toggleLocSelect(this.value)">
-                        <option value="storekeeper">Storekeeper</option>
-                        <option value="deputy_storekeeper">Deputy Storekeeper</option>
-                        <option value="barman">Barman</option>
-                        <option value="finance">Finance</option>
-                        <option value="deputy_finance">Deputy Finance</option>
-                        <option value="financial_controller">Financial Controller</option>
-                        <option value="deputy_manager">Deputy Manager</option>
-                    </select>
-                </div>
-                <div class="input-group" id="invite-loc-div">
-                    <label class="input-label">Assign To</label>
-                    <select id="invite-location-select" class="input-field"></select>
-                </div>
-            </div>
-            <div class="flex gap-3">
-                <button onclick="document.getElementById('invite-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
-                <button onclick="window.execInvite()" class="btn-primary">Send Invitation</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- OTHER DYNAMIC MODALS -->
     <div id="modal" class="modal-backdrop" onclick="window.closeModalOutside(event)"><div class="modal-box" id="modal-content" onclick="event.stopPropagation()"></div></div>
 
     <div id="price-modal" class="modal-backdrop">
         <div class="modal-box text-center">
             <h3 class="font-bold text-xl mb-2 text-slate-900">Location Pricing</h3>
+            <p class="text-sm text-slate-500 mb-6">Set selling price for each location.</p>
             <div id="price-list" class="space-y-4 mb-6 max-h-60 overflow-y-auto text-left"></div>
             <div class="flex gap-3">
                 <button onclick="document.getElementById('price-modal').style.display='none'" class="btn-primary btn-outline">Back</button>
@@ -167,6 +134,18 @@
             <div class="flex gap-3 mt-6">
                 <button onclick="document.getElementById('stock-edit-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
                 <button onclick="window.execStockRequest()" class="btn-primary">Submit Request</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="deputy-modal" class="modal-backdrop">
+        <div class="modal-box text-center">
+            <h3 class="font-bold text-xl mb-2 text-slate-900">Appoint Deputy</h3>
+            <p class="text-sm text-slate-500 mb-6">Invite a "Second Master" to assist.</p>
+            <div class="input-group text-left"><label class="input-label">Deputy Email</label><input id="depEmail" class="input-field" placeholder="deputy@company.com"></div>
+            <div class="flex gap-3 mt-6">
+                <button onclick="document.getElementById('deputy-modal').style.display='none'" class="btn-primary btn-outline">Cancel</button>
+                <button onclick="window.executeAppointDeputy()" class="btn-primary">Send Invite</button>
             </div>
         </div>
     </div>
