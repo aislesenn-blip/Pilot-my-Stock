@@ -48,7 +48,7 @@ window.activePosLocationId = null;
 window.cachedLocations = [];
 window.cachedSuppliers = [];
 window.cachedStaff = [];
-window.selectedPaymentMethod = 'Cash'; // Default Capitalized
+window.selectedPaymentMethod = 'Cash'; 
 window.tempProductData = null;
 window.currentInvView = 'stock';
 window.currentRepView = 'general';
@@ -149,7 +149,6 @@ window.onload = async function() {
         let { data: prof, error: profError } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         if (profError && profError.code !== 'PGRST116') throw profError;
 
-        // Retry logic for newly created profiles
         if (!prof) {
             await new Promise(r => setTimeout(r, 1000));
             let retry = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
@@ -182,17 +181,42 @@ window.onload = async function() {
 
         await window.initCurrency();
 
-        // Role & Visibility Logic
+        // ==========================================================
+        // SEPARATION OF POWERS (STRICT ACCESS CONTROL)
+        // ==========================================================
         const role = window.profile.role;
-        const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
+        const allNavs = ['nav-inventory', 'nav-bar', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
+        let allowedNavs = [];
 
-        if (role === 'finance' || role === 'deputy_finance') hide(['nav-bar', 'nav-settings', 'nav-staff']);
-        else if (role === 'financial_controller') hide(['nav-bar', 'nav-settings']);
-        else if (role === 'storekeeper' || role === 'deputy_storekeeper') hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
-        else if (role === 'barman') hide(['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings']);
+        // 1. Manager / Deputy Manager: Access EVERYTHING (Except POS specific view if they prefer)
+        if (['manager', 'deputy_manager'].includes(role)) {
+            allowedNavs = allNavs; 
+        }
+        // 2. Financial Controller / Finance: NO POS, NO Inventory Adjustments, YES Reports, YES Approvals
+        else if (['financial_controller', 'finance', 'deputy_finance'].includes(role)) {
+            allowedNavs = ['nav-inventory', 'nav-approvals', 'nav-reports', 'nav-staff', 'nav-settings'];
+        }
+        // 3. Storekeeper: YES Inventory, YES Reports. NO Staff, NO Settings, NO Approvals (Only Request)
+        else if (['overall_storekeeper', 'deputy_storekeeper', 'storekeeper'].includes(role)) {
+            allowedNavs = ['nav-inventory', 'nav-reports'];
+        }
+        // 4. Barman: ONLY POS
+        else if (role === 'barman') {
+            allowedNavs = ['nav-bar'];
+        }
 
-        if (['overall_storekeeper', 'deputy_storekeeper', 'manager', 'deputy_manager', 'financial_controller'].includes(role)) window.router('inventory');
-        else window.router(role === 'barman' ? 'bar' : 'inventory');
+        // HIDE UNAUTHORIZED SECTIONS
+        allNavs.forEach(navId => {
+            const el = document.getElementById(navId);
+            if (el) {
+                if (!allowedNavs.includes(navId)) el.style.display = 'none';
+                else el.style.display = 'flex'; // Ensure flex for layout
+            }
+        });
+
+        // Set Default Route based on Role
+        if (role === 'barman') window.router('bar');
+        else window.router('inventory');
 
     } catch (e) {
         handleError(e, "Init Error");
@@ -230,21 +254,25 @@ window.renderInventory = async function(c) {
         const isPOView = window.currentInvView === 'po';
         let stock = [];
 
-        if (window.profile.role === 'financial_controller' || window.profile.role === 'manager') {
+        // Permission Logic for Viewing Stock
+        if (['financial_controller', 'manager', 'deputy_manager', 'finance'].includes(window.profile.role)) {
+            // Managers/Finance see ALL stock
             const { data, error } = await supabase.from('inventory').select('*, products(*), locations(name)').eq('organization_id', window.profile.organization_id);
             if (error) throw error;
             stock = data || [];
         } else {
+            // Others see their assigned location only
             stock = await getInventory(window.profile.organization_id);
         }
 
         let filteredStock = stock;
         const role = window.profile.role;
+        // Filter logic
         if (role === 'barman') filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id && x.products.category === 'Beverage');
-        else if (role.includes('storekeeper')) filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id);
+        else if (role.includes('storekeeper') && window.profile.assigned_location_id) filteredStock = stock.filter(x => x.location_id === window.profile.assigned_location_id);
 
-        const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'overall_finance'].includes(role);
-        const canAdjust = ['manager', 'deputy_manager', 'financial_controller', 'overall_storekeeper'].includes(role);
+        const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'finance'].includes(role);
+        const canAdjust = ['manager', 'deputy_manager', 'overall_storekeeper'].includes(role);
         const canCreateLPO = ['manager', 'deputy_manager', 'overall_storekeeper', 'financial_controller'].includes(role);
 
         let content = '';
@@ -334,12 +362,16 @@ window.openReceiveModal = async function(poId) {
 
 window.execReceivePO = async function(poId) {
     const items = [];
-    document.querySelectorAll('.rec-inp').forEach(i => { if(i.value > 0) items.push({ product_id: i.dataset.pid, qty: parseFloat(i.value), unit_cost: parseFloat(i.dataset.cost) }); });
+    document.querySelectorAll('.rec-inp').forEach(i => { 
+        if(i.value > 0) {
+            // FIX: Parsing as Float to avoid String concatenation in SQL Summing logic
+            items.push({ product_id: i.dataset.pid, qty: parseFloat(i.value), unit_cost: parseFloat(i.dataset.cost) });
+        } 
+    });
     if(!items.length) return;
     
     window.premiumConfirm("Confirm Receipt", "Update stock levels?", "Yes", async () => {
         try {
-            // FIX: Using receive_stock_partial matching SQL parameters
             const { error } = await supabase.rpc('receive_stock_partial', { 
                 p_po_id: poId, 
                 p_user_id: window.profile.id, 
@@ -436,7 +468,7 @@ window.doCheckout = async function() {
 };
 
 // ============================================================================
-// 6. APPROVALS (FIXED - NO EXTERNAL DEPENDENCY)
+// 6. APPROVALS
 // ============================================================================
 window.renderApprovals = async function(c) {
     try {
@@ -452,11 +484,9 @@ window.renderApprovals = async function(c) {
     } catch(e) { handleError(e, "Render Approvals"); }
 };
 
-// FIX: Direct Database Call for Approval (Bypassing Services.js)
 window.confirmApprove = function(id) { 
     window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { 
         try { 
-            // Calling the SQL function directly
             const { data, error } = await supabase.rpc('handle_stock_approval', { p_movement_id: id });
             if (error) throw error;
             if (data && !data.success) throw new Error(data.message);
@@ -483,11 +513,13 @@ window.approveChange = function(id) {
 };
 
 // ============================================================================
-// 7. STAFF MODULE (FIXED TEAM LOCATION LOGIC)
+// 7. STAFF MODULE (FIXED: SHOW INVITES & SUSPEND LOGIC)
 // ============================================================================
 window.renderStaff = async function(c) {
     try {
         if(!['manager', 'financial_controller'].includes(window.profile.role)) return c.innerHTML = '<div class="p-20 text-center text-slate-400 font-bold">Access Restricted</div>';
+        
+        // FIX: Fetch both Active Profiles and Pending Invites
         const [staff, invites] = await Promise.all([
             supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id),
             supabase.from('staff_invites').select('*, locations(name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending')
@@ -495,22 +527,38 @@ window.renderStaff = async function(c) {
 
         if (staff.error) throw staff.error;
 
+        // Combine lists
+        const activeUsers = staff.data || [];
+        const pendingUsers = invites.data || [];
+
+        // Build HTML
+        const rowsActive = activeUsers.map(s => `
+            <tr class="border-b last:border-0 hover:bg-slate-50 transition">
+                <td class="p-4 font-bold text-slate-700 cursor-pointer hover:text-blue-600" onclick="window.viewStaffDetails('${s.id}')">${s.full_name || 'User'}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td>
+                <td class="text-xs uppercase"><span class="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-[10px]">Active</span> ${s.role.replace('_', ' ')}</td>
+                <td class="text-xs uppercase">${s.locations?.name || 'Global'}</td>
+                <td class="text-right pr-6 flex justify-end gap-2 mt-3">
+                    <button onclick="window.viewStaffDetails('${s.id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">LOGS</button>
+                    ${s.id !== window.profile.id ? `<button onclick="window.toggleSuspend('${s.id}', '${s.status}')" class="text-[10px] border px-2 py-1 rounded font-bold ${s.status==='active'?'text-red-500 border-red-200 hover:bg-red-50':'text-green-500 border-green-200 hover:bg-green-50'}">${s.status==='active'?'SUSPEND':'ACTIVATE'}</button>` : ''}
+                </td>
+            </tr>`).join('');
+
+        const rowsPending = pendingUsers.map(s => `
+            <tr class="border-b last:border-0 hover:bg-slate-50 transition bg-slate-50/50">
+                <td class="p-4 font-bold text-slate-400">${s.email}<br><span class="text-[10px] text-slate-400 font-normal">Waiting to accept</span></td>
+                <td class="text-xs uppercase"><span class="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full text-[10px]">Pending</span> ${s.role.replace('_', ' ')}</td>
+                <td class="text-xs uppercase">${s.locations?.name || 'Global'}</td>
+                <td class="text-right pr-6 flex justify-end gap-2 mt-3">
+                    <button onclick="window.cancelInvite('${s.id}')" class="text-[10px] border px-2 py-1 rounded text-red-500 border-red-200 hover:bg-red-50">REVOKE</button>
+                </td>
+            </tr>`).join('');
+
         c.innerHTML = `
         <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.inviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
         <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8">
             <table class="w-full text-left">
                 <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead>
-                <tbody>${(staff.data||[]).map(s => `
-                    <tr class="border-b last:border-0 hover:bg-slate-50 transition">
-                        <td class="p-4 font-bold text-slate-700 cursor-pointer hover:text-blue-600" onclick="window.viewStaffDetails('${s.id}')">${s.full_name || 'Pending'}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td>
-                        <td class="text-xs uppercase">${s.role.replace('_', ' ')}</td>
-                        <td class="text-xs uppercase">${s.locations?.name || 'Global'}</td>
-                        <td class="text-right pr-6 flex justify-end gap-2 mt-3">
-                            <button onclick="window.viewStaffDetails('${s.id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">LOGS</button>
-                            ${s.id !== window.profile.id ? `<button onclick="window.toggleSuspend('${s.id}', '${s.status}')" class="text-[10px] border px-2 py-1 rounded ${s.status==='active'?'text-red-500':'text-green-500'}">${s.status==='active'?'SUSPEND':'ACTIVATE'}</button>` : ''}
-                        </td>
-                    </tr>`).join('')}
-                </tbody>
+                <tbody>${rowsActive}${rowsPending}</tbody>
             </table>
         </div>`;
     } catch(e) { handleError(e, "Render Staff"); }
@@ -538,24 +586,19 @@ window.inviteModal = function() {
         </div>
         <button onclick="window.execInvite()" class="btn-primary">SEND INVITE</button>`;
     document.getElementById('modal').style.display = 'flex';
-    // Initialize view state
     window.toggleLocSelect('storekeeper');
 };
 
-// FIX: Logic for hiding location
 window.toggleLocSelect = function(role) {
     const noLocRoles = ['finance', 'deputy_finance', 'financial_controller', 'manager', 'deputy_manager'];
     document.getElementById('locDiv').style.display = noLocRoles.includes(role) ? 'none' : 'block';
 };
 
-// FIX: Logic for sending NULL location
 window.execInvite = async function() {
     try {
         const email = document.getElementById('iE').value;
         const role = document.getElementById('iR').value;
         const noLocRoles = ['finance', 'deputy_finance', 'financial_controller', 'manager', 'deputy_manager'];
-        
-        // If role doesn't need location, send NULL, otherwise send selected value
         const loc = noLocRoles.includes(role) ? null : document.getElementById('iL').value;
         
         if(!email) return window.showNotification("Email required", "error");
@@ -578,7 +621,6 @@ window.execInvite = async function() {
     }
 };
 
-// 8. REPORTS, SETTINGS & MISC (STANDARD)
 window.viewStaffDetails = async function(id) {
     try {
         const [logs, p] = await Promise.all([
@@ -662,22 +704,28 @@ window.filterReport = function() {
         if(pay && pay !== 'all') f = f.filter(l => (l.payment_method||'').includes(pay));
 
         const revenue = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.total_value || 0), 0);
-        // Simplified profit calculation logic (Assuming total_value is profit for now if cost not logged in transaction)
         const profit = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.total_value || 0), 0); 
 
         document.getElementById('repRev').innerHTML = window.formatPrice(revenue);
         document.getElementById('repProf').innerHTML = window.formatPrice(profit);
 
-        document.getElementById('logsBody').innerHTML = f.map(l => `
+        document.getElementById('logsBody').innerHTML = f.map(l => {
+            let locationDisplay = '-';
+            if (l.type === 'sale') locationDisplay = `<span class="text-green-600 font-bold">OUT:</span> ${l.from_loc?.name || 'Store'}`;
+            else if (l.type === 'receive') locationDisplay = `<span class="text-blue-600 font-bold">IN:</span> ${l.locations?.name || 'Store'}`;
+            else locationDisplay = `${l.from_loc?.name || '?'} <span class="text-slate-400">➝</span> ${l.locations?.name || '?'}`;
+
+            return `
             <tr class="border-b hover:bg-slate-50 ${l.status==='void'?'opacity-50 line-through':''}">
                 <td class="p-4 text-xs font-bold text-slate-500">${new Date(l.created_at).toLocaleDateString()}</td>
                 <td class="text-xs font-bold uppercase">${l.type}</td>
                 <td class="text-xs">${l.products?.name}</td>
-                <td class="text-xs text-slate-500">${l.locations?.name}</td>
+                <td class="text-xs font-bold">${locationDisplay}</td>
                 <td class="text-[10px] font-bold">${l.payment_method || l.reference || '-'}</td>
                 <td class="text-right font-mono text-sm">${l.quantity}</td>
                 <td class="text-right font-mono text-sm font-bold">${window.formatPrice(l.total_value)}</td>
-            </tr>`).join('');
+            </tr>`;
+        }).join('');
     } catch(e) { handleError(e, "Filter Report"); }
 };
 
@@ -715,3 +763,4 @@ window.saveRates = async function() { try { const updates = []; ALL_CURRENCIES.f
 window.reassignModal = function(id, n) { const opts=window.cachedLocations.map(l=>`<option value="${l.id}">${l.name}</option>`).join(''); document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-6">Move ${n}</h3><div class="input-group mb-6"><label class="input-label">New Location</label><select id="nLoc" class="input-field">${opts}</select></div><button onclick="window.doReassign('${id}')" class="btn-primary">MOVE</button>`; document.getElementById('modal').style.display='flex'; };
 window.doReassign = async function(id) { try { const {error} = await supabase.from('profiles').update({assigned_location_id:document.getElementById('nLoc').value}).eq('id',id); if(error) throw error; document.getElementById('modal').style.display='none'; window.renderStaff(document.getElementById('app-view')); } catch(e){ handleError(e, "Reassign"); } };
 window.toggleSuspend = async function(id, s) { try { const {error} = await supabase.from('profiles').update({status: s==='active'?'suspended':'active'}).eq('id', id); if(error) throw error; window.renderStaff(document.getElementById('app-view')); } catch(e){ handleError(e, "Toggle Suspend"); } };
+window.cancelInvite = async function(id) { try { const {error} = await supabase.from('staff_invites').delete().eq('id',id); if(error) throw error; window.renderStaff(document.getElementById('app-view')); } catch(e){ handleError(e, "Cancel Invite"); } };
