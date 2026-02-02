@@ -19,7 +19,17 @@ export async function getInventory(orgId) {
 }
 
 export async function createLocation(orgId, name, type, parentId = null) {
-    const { data, error } = await supabase.from('locations').insert({ organization_id: orgId, name: name.toUpperCase(), type, parent_location_id: parentId }).select().single();
+    const { data, error } = await supabase
+        .from('locations')
+        .insert({ 
+            organization_id: orgId, 
+            name: name.toUpperCase(), 
+            type, 
+            parent_location_id: parentId 
+        })
+        .select()
+        .single();
+    
     if (error) throw error;
     return data;
 }
@@ -70,6 +80,7 @@ export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) 
     if (!stock || stock.quantity < qty) throw new Error("Insufficient stock available for transfer");
 
     // 2. Create Pending Transfer Request
+    // Trigger isiyokua na 'To Location' (Void/Adjust) itashughulikiwa na DB
     const { error } = await supabase.from('stock_movements').insert({
         organization_id: orgId,
         product_id: prodId,
@@ -85,9 +96,12 @@ export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) 
 
 export async function getPendingApprovals(orgId) {
     const { data, error } = await supabase.from('stock_movements')
-        .select(`*, products(name), from_loc:from_location_id(name), to_loc:to_location_id(name)`)
+        // HAPA CHINI: Tumeiambia itumie njia maalum 'fk_stock_movements_products_final'
+        // Hii inaondoa ile error ya PGRST201 (Ambiguity)
+        .select(`*, products!fk_stock_movements_products_final(name), from_loc:from_location_id(name), to_loc:to_location_id(name)`)
         .eq('organization_id', orgId)
         .eq('status', 'pending');
+        
     if (error) {
         console.error("Approvals Error:", error);
         return [];
@@ -97,31 +111,21 @@ export async function getPendingApprovals(orgId) {
 
 export async function respondToApproval(moveId, status, userId) {
     // status: 'approved' or 'rejected'
-    if (status === 'approved') {
-        const { data: move } = await supabase.from('stock_movements').select('*').eq('id', moveId).single();
-        
-        // Execute the move via RPC
-        const { error } = await supabase.rpc('transfer_stock_safe', {
-            p_product_id: move.product_id,
-            p_from_loc: move.from_location_id,
-            p_to_loc: move.to_location_id,
-            p_qty: move.quantity
-        });
-        
-        if (error) throw error;
+    
+    // NOTE: Tumeshaweka SQL Trigger (handle_stock_approval_safe).
+    // Hivyo hapa tunaupdate status TU. Database itafanya uhamisho (Transfer/Void) yenyewe.
+    // Hatuhitaji tena kuita RPC hapa ili kuzuia kukata stock mara mbili.
 
-        // Log Transaction
-        await supabase.from('transactions').insert({
-            organization_id: move.organization_id,
-            user_id: userId,
-            product_id: move.product_id,
-            from_location_id: move.from_location_id,
-            to_location_id: move.to_location_id,
-            type: 'transfer_completed',
-            quantity: move.quantity
-        });
-    }
+    const { error } = await supabase
+        .from('stock_movements')
+        .update({ 
+            status: status, 
+            approved_by: userId 
+        })
+        .eq('id', moveId);
 
-    // Update Request Status
-    await supabase.from('stock_movements').update({ status, approved_by: userId }).eq('id', moveId);
+    if (error) throw error;
+
+    // Hatuhitaji ku-insert Transaction hapa kwa sababu Trigger ya SQL inafanya hivyo automatic.
+    return { success: true };
 }
