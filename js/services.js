@@ -55,51 +55,27 @@ export async function createLocation(orgId, name, type, parentId = null) {
     }
 }
 
-// --- POS & SALES (WITH COST SNAPSHOT) ---
+// --- POS & SALES (ATOMIC TRANSACTION RPC) ---
 export async function processBarSale(orgId, locId, items, userId, paymentMethod) {
     try {
-        let total = 0;
-        let profit = 0;
+        // Prepare items for RPC (must match JSON structure in SQL)
+        const saleItems = items.map(i => ({
+            product_id: i.product_id,
+            qty: i.qty,
+            price: i.price,
+            method: paymentMethod
+        }));
 
-        for (const item of items) {
-            // 1. Get Product Cost (SNAPSHOT)
-            const { data: prod, error: prodError } = await supabase.from('products').select('cost_price').eq('id', item.product_id).single();
-            if (prodError) throw prodError;
+        const { data, error } = await supabase.rpc('process_sale_transaction', {
+            p_org_id: orgId,
+            p_loc_id: locId,
+            p_user_id: userId,
+            p_items: saleItems,
+            p_method: paymentMethod
+        });
 
-            const costSnapshot = prod?.cost_price || 0;
-            const lineTotal = item.qty * item.price;
-            const lineCost = item.qty * costSnapshot;
-            const lineProfit = lineTotal - lineCost;
-
-            total += lineTotal;
-            profit += lineProfit;
-
-            // 2. Reduce Stock (RPC)
-            const { error: stockError } = await supabase.rpc('deduct_stock', {
-                p_product_id: item.product_id,
-                p_location_id: locId,
-                p_quantity: item.qty
-            });
-            if (stockError) throw new Error(`Insufficient stock for item ID: ${item.product_id} - ${stockError.message}`);
-
-            // 3. Record Transaction (WITH SNAPSHOT)
-            const { error: transError } = await supabase.from('transactions').insert({
-                organization_id: orgId,
-                user_id: userId,
-                product_id: item.product_id,
-                from_location_id: locId,
-                type: 'sale',
-                quantity: item.qty,
-                unit_price_snapshot: item.price,
-                unit_cost_snapshot: costSnapshot, // THE FIX
-                total_value: lineTotal,
-                gross_profit: lineProfit, // THE FIX
-                payment_method: paymentMethod,
-                status: 'completed'
-            });
-            if (transError) throw transError;
-        }
-        return { success: true, total };
+        if (error) throw error;
+        return data;
     } catch (error) {
         handleError(error, "Process Sale");
         throw error;
@@ -137,9 +113,6 @@ export async function transferStock(prodId, fromLoc, toLoc, qty, userId, orgId) 
 
 export async function getPendingApprovals(orgId) {
     try {
-        // Using generic join if specific constraint names are unknown/reset
-        // If constraints are strict, we might need !fk_ syntax, but standard is safer for 'reset' state unless we know schema details.
-        // Assuming standard FKs from the reset schema.
         const { data, error } = await supabase.from('stock_movements')
             .select(`
                 *,
