@@ -2,7 +2,6 @@ import { getSession, logout } from './auth.js';
 import { getInventory, processBarSale, getPendingApprovals, respondToApproval, transferStock, createLocation } from './services.js';
 import { supabase } from './supabase.js';
 
-// Helper for Error Handling
 const handleError = (error, context) => {
     console.error(`[${context}] Full Error:`, error);
     if (window.showNotification) {
@@ -12,9 +11,6 @@ const handleError = (error, context) => {
     }
 };
 
-// ============================================================================
-// 1. GLOBAL UTILITIES
-// ============================================================================
 window.profile = {};
 window.currentLogs = [];
 window.cart = [];
@@ -63,7 +59,7 @@ window.premiumConfirm = function(title, desc, btnText, callback) {
 window.initCurrency = async function() {
     if (!window.profile?.organization_id) return;
     try {
-        const { data: org, error } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single();
+        const { data: org } = await supabase.from('organizations').select('base_currency').eq('id', window.profile.organization_id).single();
         if(org) window.baseCurrency = org.base_currency;
         const { data: rates } = await supabase.from('exchange_rates').select('*').eq('organization_id', window.profile.organization_id);
         window.currencyRates = { [window.baseCurrency]: 1 };
@@ -96,9 +92,6 @@ window.getCurrencySelectorHTML = function() {
     return `<select onchange="window.changeCurrency(this.value)" class="bg-slate-100 border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700 outline-none cursor-pointer ml-4 shadow-sm h-8">${options}</select>`;
 };
 
-// ============================================================================
-// 4. MAIN INIT & STRICT ROUTING (RBAC)
-// ============================================================================
 window.onload = async function() {
     window.logoutAction = logout;
     const session = await getSession();
@@ -133,12 +126,12 @@ window.onload = async function() {
 
         await window.initCurrency();
 
-        // --- STRICT ROUTER LOGIC ---
+        // STRICT ROUTER (RBAC)
         const role = window.profile.role;
         const hide = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.style.display = 'none'; });
+        const remove = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.remove(); });
 
         if (role === 'barman') {
-            // LOCK to POS
             document.getElementById('sidebar').style.display = 'none';
             document.querySelector('main').classList.remove('md:ml-72');
             document.querySelector('.md:hidden').style.display = 'none';
@@ -146,21 +139,17 @@ window.onload = async function() {
             return;
         }
 
-        if (role === 'finance' || role === 'deputy_finance') hide(['nav-bar', 'nav-settings', 'nav-staff']);
-        else if (role === 'financial_controller') hide(['nav-bar', 'nav-settings']); // Super Finance
-        else if (role === 'storekeeper' || role === 'deputy_storekeeper') {
-            // LOCK to Inventory/Reports
-            hide(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
-        }
+        if (role === 'finance' || role === 'deputy_finance') remove(['nav-bar', 'nav-settings', 'nav-staff']);
+        else if (role === 'financial_controller') remove(['nav-bar', 'nav-settings']);
+        else if (role === 'storekeeper' || role === 'deputy_storekeeper') remove(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
 
         if (['overall_storekeeper', 'deputy_storekeeper', 'manager', 'deputy_manager', 'financial_controller'].includes(role)) window.router('inventory');
-        else window.router('inventory'); // Default fallback
+        else window.router('inventory');
 
     } catch (e) { handleError(e, "Init Error"); }
 };
 
 window.router = async function(view) {
-    // Double Check Lock
     if(window.profile.role === 'barman' && view !== 'bar') {
         console.warn("Access Denied");
         view = 'bar';
@@ -188,7 +177,6 @@ window.router = async function(view) {
     }, 50);
 };
 
-// ... (Save Name / Profile logic remains standard) ...
 window.saveName = async function() {
     const orgName = document.getElementById('orgNameInput').value;
     const name = document.getElementById('userNameInput').value;
@@ -201,9 +189,22 @@ window.saveName = async function() {
     location.reload();
 };
 
-// ============================================================================
-// 5. INVENTORY (Filtered by Location)
-// ============================================================================
+window.showUpdateProfileModal = function() {
+    document.getElementById('modal-content').innerHTML = `
+        <h3 class="font-bold text-lg mb-6 text-center">Complete Profile</h3>
+        <div class="input-group mb-6"><label>Full Name</label><input id="upName" class="input-field" value="${window.profile.full_name!=='New User'?window.profile.full_name:''}"></div>
+        <div class="input-group mb-6"><label>Phone</label><input id="upPhone" class="input-field" value="${window.profile.phone||''}"></div>
+        <button onclick="window.updateProfile()" class="btn-primary">SAVE DETAILS</button>`;
+    document.getElementById('modal').style.display = 'flex';
+};
+window.updateProfile = async function() {
+    const name = document.getElementById('upName').value, phone = document.getElementById('upPhone').value;
+    if(!name || !phone) return;
+    await supabase.from('profiles').update({full_name:name, phone}).eq('id',window.profile.id);
+    window.profile.full_name = name; window.profile.phone = phone;
+    document.getElementById('modal').style.display = 'none';
+};
+
 window.renderInventory = async function(c) {
     const isPOView = window.currentInvView === 'po';
     let stock = [];
@@ -212,7 +213,7 @@ window.renderInventory = async function(c) {
     if (window.profile.role.includes('storekeeper') && !window.profile.role.includes('overall')) {
         stock = await getInventory(window.profile.organization_id, window.profile.assigned_location_id);
     } else {
-        stock = await getInventory(window.profile.organization_id); // All for Manager/Finance
+        stock = await getInventory(window.profile.organization_id);
     }
 
     const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'overall_finance'].includes(window.profile.role);
@@ -229,7 +230,6 @@ window.renderInventory = async function(c) {
     c.innerHTML = `<div class="flex flex-col md:flex-row justify-between items-center gap-6 mb-8"><div class="flex items-center gap-4"><h1 class="text-3xl font-bold uppercase text-slate-900">Inventory</h1>${showPrice?window.getCurrencySelectorHTML():''}</div><div class="flex gap-1 bg-slate-100 p-1 rounded-xl"><button onclick="window.currentInvView='stock'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${!isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">STOCK</button><button onclick="window.currentInvView='po'; window.router('inventory')" class="px-6 py-2.5 text-xs font-bold rounded-lg transition ${isPOView?'bg-white shadow-sm text-slate-900':'text-slate-500 hover:text-slate-700'}">LPO</button></div><div class="flex gap-3">${canCreateLPO?`<button onclick="window.createPOModal()" class="btn-primary w-auto px-6 shadow-lg shadow-blue-900/20 bg-blue-600 hover:bg-blue-700">Create LPO</button><button onclick="window.addProductModal()" class="btn-primary w-auto px-6 shadow-lg shadow-slate-900/10">New Item</button>`:''}</div></div><div class="bg-white rounded-3xl border shadow-sm overflow-hidden min-h-[400px]">${content}</div>`;
 };
 
-// ... (Retain existing LPO/Receive functions, simplified) ...
 window.createPOModal = async function() {
     try {
         const { data: prods } = await supabase.from('products').select('*').eq('organization_id', window.profile.organization_id).order('name');
@@ -257,7 +257,6 @@ window.execCreatePO = async function() {
     document.getElementById('modal').style.display = 'none'; window.showNotification("LPO Created", "success"); window.currentInvView = 'po'; window.router('inventory');
 };
 
-// RPC for Receiving Stock
 window.openReceiveModal = async function(poId) {
     try {
         const { data: items, error } = await supabase.from('po_items').select('*, products(name)').eq('po_id', poId);
@@ -278,18 +277,15 @@ window.openReceiveModal = async function(poId) {
 };
 window.execReceivePO = async function(poId) {
     const items = [];
-    document.querySelectorAll('.rec-inp').forEach(i => { if(i.value > 0) items.push({ product_id: i.dataset.pid, qty: parseFloat(i.value) }); });
+    document.querySelectorAll('.rec-inp').forEach(i => { if(i.value > 0) items.push({ product_id: i.dataset.pid, qty: parseFloat(i.value), unit_cost: parseFloat(i.dataset.cost) }); });
     if(!items.length) return;
     window.premiumConfirm("Confirm Receipt", "Update stock levels?", "Yes", async () => {
-        const { error } = await supabase.rpc('receive_stock_partial', { p_po_id: poId, p_user_id: window.profile.id, p_org_id: window.profile.organization_id, p_items: items });
+        const { error } = await supabase.rpc('receive_stock_partial', { p_po_id: poId, p_user_id: window.profile.id, p_org_id: window.profile.organization_id, p_items: items, p_loc_id: window.profile.assigned_location_id });
         if(error) window.showNotification(error.message, "error");
         else { window.showNotification("Received", "success"); document.getElementById('modal').style.display='none'; window.router('inventory'); }
     });
 };
 
-// ============================================================================
-// 6. POS (BARMAN)
-// ============================================================================
 window.renderBar = async function(c) {
     try {
         const inv = await getInventory(window.profile.organization_id);
@@ -313,30 +309,22 @@ window.addCart = function(n,p,id) { if(!window.cart) window.cart=[]; const x=win
 window.renderCart = function() { const l=document.getElementById('cart-list'), t=document.getElementById('cart-total'); let sum=0; l.innerHTML=(window.cart||[]).map(i=>{sum+=i.price*i.qty; return `<div class="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 group"><div class="flex flex-col"><span class="text-xs font-bold text-slate-800 uppercase">${i.name}</span><span class="text-[10px] text-slate-400 font-mono">${window.formatPrice(i.price)} x ${i.qty}</span></div><button onclick="window.remCart('${i.id}')" class="w-6 h-6 flex items-center justify-center rounded-full text-slate-300 hover:text-red-500">✕</button></div>`}).join(''); t.innerText=window.formatPrice(sum); };
 window.remCart = function(id) { window.cart=window.cart.filter(c=>c.id!==id); window.renderCart(); };
 window.confirmCheckout = function() { if(!window.cart.length) return; window.premiumConfirm(`Confirm ${window.selectedPaymentMethod.toUpperCase()} Sale?`, "Charge this amount.", "Charge", window.doCheckout); };
-window.doCheckout = async function() {
-    try {
-        await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id, window.selectedPaymentMethod);
-        window.showNotification("Sale Completed Successfully", "success");
-        window.cart=[]; window.renderCart(); window.router('bar');
-    } catch(e) { handleError(e, "Do Checkout"); }
-};
+window.doCheckout = async function() { try { await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id, window.selectedPaymentMethod); window.showNotification("Sale Completed Successfully", "success"); window.cart=[]; window.renderCart(); window.router('bar'); } catch(e) { window.showNotification(e.message, "error"); } };
 
-// ============================================================================
-// 7. APPROVALS
-// ============================================================================
 window.renderApprovals = async function(c) {
     try {
         const reqs = await getPendingApprovals(window.profile.organization_id);
+        const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
+
         c.innerHTML = `
         <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1>
-        <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${reqs.length ? reqs.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td><td class="p-6"><div class="text-blue-600 font-mono font-bold text-lg">${r.quantity}</div><div class="text-xs text-slate-400 uppercase mt-1">Requested</div></td><td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td><td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>'}</tbody></table></div>`;
+        <div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${reqs.length ? reqs.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td><td class="p-6"><div class="text-blue-600 font-mono font-bold text-lg">${r.quantity}</div><div class="text-xs text-slate-400 uppercase mt-1">Requested</div></td><td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td><td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>'}</tbody></table></div></div>
+        <div><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust)</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${(changes||[]).length ? changes.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action}</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div></td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>'}</tbody></table></div></div>`;
     } catch(e) { handleError(e, "Render Approvals"); }
 };
-window.confirmApprove = function(id) { window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { try { await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Authorized", "success"); window.router('approvals'); } catch(e) { handleError(e, "Confirm Approve"); } }); };
+window.confirmApprove = function(id) { window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Authorized", "success"); window.router('approvals'); }); };
+window.approveChange = function(id) { window.premiumConfirm("Approve Change?", "Execute this request.", "Approve", async () => { await supabase.rpc('process_change_request', { p_request_id: id, p_status: 'approved', p_reviewer_id: window.profile.id }); window.showNotification("Executed", "success"); window.router('approvals'); }); };
 
-// ============================================================================
-// 8. STAFF & INVITE LOGIC (FIXED)
-// ============================================================================
 window.renderStaff = async function(c) {
     try {
         const { data: staff } = await supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id);
@@ -351,7 +339,6 @@ window.renderStaff = async function(c) {
     } catch(e) { handleError(e, "Render Staff"); }
 };
 
-// STATIC MODAL OPENER
 window.openInviteModal = function() {
     const locSelect = document.getElementById('invite-location-select');
     locSelect.innerHTML = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
@@ -371,7 +358,6 @@ window.execInvite = async function() {
 
         if (!email) return window.showNotification("Email required", "error");
 
-        // Validation: If not FC, must have location
         if (role !== 'financial_controller' && !locId) {
             return window.showNotification("Please select a valid Location.", "error");
         }
@@ -382,7 +368,8 @@ window.execInvite = async function() {
             email,
             role,
             assigned_location_id: locId,
-            status: 'pending'
+            status: 'pending',
+            invited_by: window.profile.id
         });
 
         if (error) throw error;
@@ -407,24 +394,18 @@ window.viewStaffDetails = async function(id) {
     } catch(e) { handleError(e, "View Staff Details"); }
 };
 
-// ============================================================================
-// 9. REPORTS (WITH FILTERS & P&L SNAPSHOT)
-// ============================================================================
 window.renderReports = async function(c) {
     try {
         const { data: logs } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(2000);
         window.currentLogs = logs || [];
 
-        // Populate Filter Dropdowns dynamically
         const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
         const staffOpts = window.cachedStaff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join('');
 
-        // Clone Template
         const template = document.getElementById('report-filters-template').content.cloneNode(true);
         c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Enterprise Reporting</h1>`;
         c.appendChild(template);
 
-        // Populate options in the DOM now that it's appended
         document.getElementById('rLoc').innerHTML += locOpts;
         document.getElementById('rStaff').innerHTML += staffOpts;
         document.getElementById('rCat').innerHTML += PRODUCT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
@@ -457,7 +438,6 @@ window.filterReport = function() {
 
     let f = window.currentLogs;
 
-    // Date Filters
     const start = document.getElementById('rStart')?.value;
     const end = document.getElementById('rEnd')?.value;
     if(start) f = f.filter(l => new Date(l.created_at) >= new Date(start));
@@ -470,7 +450,6 @@ window.filterReport = function() {
     if(pay && pay !== 'all') f = f.filter(l => (l.payment_method||'').includes(pay));
     if(search) f = f.filter(l => l.products?.name.toLowerCase().includes(search));
 
-    // P&L CALCULATION (USING SNAPSHOTS)
     const revenue = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.total_value || 0), 0);
     const profit = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.gross_profit || 0), 0);
 
@@ -487,6 +466,7 @@ window.filterReport = function() {
             <td class="text-right font-mono text-xs text-slate-400">${window.formatPrice(l.unit_cost_snapshot)}</td>
             <td class="text-right font-mono text-xs font-bold text-slate-900">${window.formatPrice(l.total_value)}</td>
             <td class="text-right font-mono text-xs font-bold text-green-600 pr-4">${window.formatPrice(l.gross_profit)}</td>
+            ${window.profile.role === 'financial_controller' && l.status !== 'void' ? `<td class="text-right"><button onclick="window.requestDeleteTransaction('${l.id}')" class="text-[10px] text-red-500 border border-red-200 px-2 py-1 rounded hover:bg-red-50">VOID</button></td>` : ''}
         </tr>`).join('');
 };
 
@@ -499,9 +479,6 @@ window.exportCSV = () => {
     let link=document.createElement("a"); link.href=encodeURI(c); link.download="report.csv"; link.click();
 };
 
-// ============================================================================
-// RESTORED FUNCTIONS (DEAD ENDS FIX)
-// ============================================================================
 window.addProductModal = function() {
     if(!['manager','overall_storekeeper'].includes(window.profile.role)) return;
     const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join('');
@@ -545,13 +522,11 @@ window.finalizeProduct = async function() {
 window.issueModal = async (name, id, fromLoc) => { try { window.selectedDestinationId = null; const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).neq('id', fromLoc); const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Move: ${name}</h3><div class="grid grid-cols-2 gap-2 mb-4 max-h-40 overflow-y-auto">${html}</div><div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div><button onclick="window.execIssue('${id}', '${fromLoc}')" class="btn-primary">TRANSFER</button>`; document.getElementById('modal').style.display = 'flex'; } catch(e) { handleError(e, "Issue Modal"); } };
 window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white')); el.classList.add('bg-slate-900', 'text-white'); window.selectedDestinationId = id; };
 window.execIssue = async (pid, fromLoc) => { const qty = document.getElementById('tQty').value; if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error"); try { await transferStock(pid, fromLoc, window.selectedDestinationId, qty, window.profile.id, window.profile.organization_id); document.getElementById('modal').style.display = 'none'; window.showNotification("Request Sent", "success"); } catch(e) { window.showNotification(e.message, "error"); } };
+window.requestDeleteTransaction = async (id) => { window.premiumConfirm("Void Transaction?", "This requires approval.", "Request", async () => { try { const { error } = await supabase.from('change_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, target_table: 'transactions', target_id: id, action: 'VOID', status: 'pending' }); if(error) throw error; window.showNotification("Sent", "success"); } catch(e) { handleError(e, "Delete Trans"); } }); };
 window.requestDeleteProduct = async (id) => { window.premiumConfirm("Delete Product?", "Approval required.", "Request", async () => { try { const { error } = await supabase.from('change_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, target_table: 'products', target_id: id, action: 'DELETE_PRODUCT', status: 'pending' }); if(error) throw error; window.showNotification("Sent", "success"); } catch(e) { handleError(e, "Delete Prod"); } }); };
 window.openStockEdit = (id, q) => { document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">Edit Stock</h3><input id="newQ" type="number" class="input-field mb-4" value="${q}"><textarea id="newR" class="input-field" placeholder="Reason"></textarea><button onclick="window.execStockEdit('${id}')" class="btn-primary mt-4">SUBMIT</button>`; document.getElementById('modal').style.display='flex'; };
 window.execStockEdit = async (id) => { try { const {error} = await supabase.from('change_requests').insert({organization_id:window.profile.organization_id, requester_id:window.profile.id, target_table:'inventory', target_id:id, action:'EDIT_INVENTORY', new_data:{new_qty:document.getElementById('newQ').value, reason:document.getElementById('newR').value}, status:'pending'}); if(error) throw error; document.getElementById('modal').style.display='none'; window.showNotification("Request Sent", "success"); } catch(e) { handleError(e, "Stock Edit"); } };
-window.newStockTakeModal = async () => { const locs = window.cachedLocations; document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">New Audit</h3><select id="stLoc" class="input-field mb-4">${locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('')}</select><button onclick="window.startStockTake()" class="btn-primary">START</button>`; document.getElementById('modal').style.display='flex'; };
-window.startStockTake = async () => { const lid = document.getElementById('stLoc').value; const inv = await getInventory(window.profile.organization_id); const items = inv.filter(x=>x.location_id===lid); document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">Counting...</h3><div class="max-h-60 overflow-y-auto mb-4">${items.map(i=>`<div class="flex justify-between mb-2"><span class="w-1/2 text-xs">${i.products.name}</span><input type="number" class="st-input border w-20 text-center" data-id="${i.product_id}" data-sys="${i.quantity}"></div>`).join('')}</div><button onclick="window.saveStockTake('${lid}')" class="btn-primary">FINISH</button>`; };
-window.saveStockTake = async (lid) => { const inps = document.querySelectorAll('.st-input'); const {data:st}=await supabase.from('stock_takes').insert({organization_id:window.profile.organization_id, location_id:lid, conducted_by:window.profile.id, status:'Completed'}).select().single(); const items=Array.from(inps).map(i=>({stock_take_id:st.id, product_id:i.dataset.id, system_qty:i.dataset.sys, physical_qty:i.value||0})); await supabase.from('stock_take_items').insert(items); document.getElementById('modal').style.display='none'; window.router('reports'); };
-window.viewVariance = async (id) => { const {data:i}=await supabase.from('stock_take_items').select('*, products(name)').eq('stock_take_id',id); document.getElementById('modal-content').innerHTML=`<h3 class="text-center font-bold mb-4">Variance</h3><div class="max-h-60 overflow-y-auto"><table class="w-full text-xs"><thead><tr><th>Item</th><th>Sys</th><th>Phys</th><th>Var</th></tr></thead><tbody>${i.map(x=>`<tr><td>${x.products.name}</td><td>${x.system_qty}</td><td>${x.physical_qty}</td><td class="${x.variance<0?'text-red-500':''}">${x.variance}</td></tr>`).join('')}</tbody></table></div>`; document.getElementById('modal').style.display='flex'; };
+window.renderSettings = async (c) => { const [l, s] = await Promise.all([supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id), supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id)]); window.cachedLocations = l.data || []; window.cachedSuppliers = s.data || []; const rateRows = ALL_CURRENCIES.map(code => { const val = code === window.baseCurrency ? 1 : (window.currencyRates[code] || ''); return `<div class="flex justify-between items-center py-2 border-b last:border-0"><span class="font-bold text-xs w-10">${code}</span>${code === window.baseCurrency ? '<span class="text-xs font-mono font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded">BASE</span>' : `<input id="rate-${code}" type="number" step="0.01" value="${val}" class="w-24 input-field py-1 text-right font-mono text-xs" placeholder="Rate">`}</div>`; }).join(''); c.innerHTML = `<h1 class="text-3xl font-bold uppercase text-slate-900 mb-8">Settings</h1><div class="grid grid-cols-1 md:grid-cols-2 gap-8"><div class="space-y-8"><div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Locations</h3><button onclick="window.addStoreModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ ADD</button></div><table class="w-full text-left"><tbody>${window.cachedLocations.map(l => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${l.name}</td><td class="text-xs text-slate-400 uppercase">${l.type.replace('_', ' ')}</td></tr>`).join('')}</tbody></table></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Suppliers</h3><button onclick="window.openSupplierModal()" class="text-[10px] bg-slate-900 text-white px-3 py-1.5 rounded-lg font-bold">+ NEW</button></div><table class="w-full text-left"><tbody>${window.cachedSuppliers.map(s => `<tr class="border-b last:border-0"><td class="py-3 font-bold text-sm uppercase text-slate-700">${s.name}</td><td class="text-xs text-slate-400 font-mono text-right">${s.tin || '-'}</td></tr>`).join('')}</tbody></table></div></div><div class="bg-white rounded-3xl border border-slate-200 shadow-sm p-8"><div class="flex justify-between items-center mb-6"><h3 class="font-bold text-sm uppercase">Exchange Rates</h3></div><div class="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">${rateRows}</div><button onclick="window.saveRates()" class="btn-primary mt-6">UPDATE RATES</button></div></div>`; };
 window.addStoreModal = () => { const parents = window.cachedLocations.filter(l => l.type !== 'department').map(l => `<option value="${l.id}">${l.name}</option>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">Add Location</h3><div class="input-group mb-6"><label class="input-label">Location Name</label><input id="locName" class="input-field uppercase"></div><div class="input-group mb-6"><label class="input-label">Type</label><select id="locType" class="input-field" onchange="document.getElementById('parentGrp').style.display = this.value === 'main_store' ? 'none' : 'block'"><option value="sub_store">Camp / Sub-Store</option><option value="department">Department (Bar/Kitchen)</option><option value="main_store">Main Store (HQ)</option></select></div><div id="parentGrp" class="input-group mb-6"><label class="input-label">Parent Store (Linked To)</label><select id="locParent" class="input-field">${parents}</select></div><button onclick="window.execAddStore()" class="btn-primary">CREATE LOCATION</button>`; document.getElementById('modal').style.display = 'flex'; };
 window.execAddStore = async () => { const name = document.getElementById('locName').value; const type = document.getElementById('locType').value; const parent = type === 'main_store' ? null : document.getElementById('locParent').value; if(!name) return; await createLocation(window.profile.organization_id, name, type, parent); document.getElementById('modal').style.display = 'none'; window.showNotification("Location Created", "success"); window.router('settings'); };
 window.openSupplierModal = () => { document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-6 uppercase text-center">New Supplier</h3><div class="input-group mb-6"><label class="input-label">Company Name</label><input id="sN" class="input-field uppercase"></div><div class="input-group mb-6"><label class="input-label">TIN Number</label><input id="sT" class="input-field"></div><div class="input-group mb-6"><label class="input-label">Phone Contact</label><input id="sP" class="input-field"></div><div class="input-group mb-6"><label class="input-label">Physical Address</label><input id="sA" class="input-field"></div><button onclick="window.execAddSupplier()" class="btn-primary">SAVE SUPPLIER</button>`; document.getElementById('modal').style.display = 'flex'; };
