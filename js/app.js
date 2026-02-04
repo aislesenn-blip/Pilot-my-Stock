@@ -86,6 +86,11 @@ window.formatPrice = function(amount) {
     return `${window.selectedCurrency} ${Number(converted).toLocaleString(undefined, {minimumFractionDigits: 2})}`;
 };
 
+window.formatNumber = function(num) {
+    if(!num && num !== 0) return '0';
+    return Number(num).toLocaleString();
+};
+
 window.changeCurrency = function(curr) {
     window.selectedCurrency = curr;
     const activeEl = document.querySelector('.nav-item.nav-active');
@@ -127,7 +132,7 @@ async function initApp() {
         const [locsRes, supsRes, staffRes] = await Promise.all([
             supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
             supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id),
-            supabase.from('profiles').select('id, full_name').eq('organization_id', window.profile.organization_id)
+            supabase.from('profiles').select('id, full_name, email').eq('organization_id', window.profile.organization_id)
         ]);
         window.cachedLocations = locsRes.data || [];
         window.cachedSuppliers = supsRes.data || [];
@@ -135,6 +140,7 @@ async function initApp() {
 
         await window.initCurrency();
 
+        // RBAC LOGIC
         const role = window.profile.role;
         const remove = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.remove(); });
 
@@ -150,6 +156,7 @@ async function initApp() {
         if (role === 'finance' || role === 'deputy_finance') remove(['nav-bar', 'nav-settings', 'nav-staff']);
         else if (role === 'financial_controller') remove(['nav-bar', 'nav-settings']);
         else if (role === 'storekeeper' || role === 'deputy_storekeeper') remove(['nav-bar', 'nav-approvals', 'nav-staff', 'nav-settings']);
+        else if (role === 'deputy_manager') remove(['nav-settings']);
 
         window.router('inventory');
 
@@ -205,15 +212,16 @@ window.renderInventory = async function(c) {
     let stock = [];
 
     try {
-        if (window.profile.role.includes('storekeeper') && !window.profile.role.includes('overall')) {
+        if (['storekeeper', 'deputy_storekeeper'].includes(window.profile.role)) {
             stock = await getInventory(window.profile.organization_id, window.profile.assigned_location_id);
         } else {
             stock = await getInventory(window.profile.organization_id);
         }
 
-        const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'overall_finance'].includes(window.profile.role);
-        const canCreateLPO = ['manager', 'deputy_manager', 'overall_storekeeper', 'financial_controller'].includes(window.profile.role);
-        const canEdit = ['manager', 'financial_controller'].includes(window.profile.role);
+        const role = window.profile.role;
+        const showPrice = ['manager', 'deputy_manager', 'financial_controller', 'finance', 'deputy_finance'].includes(role);
+        const canCreateLPO = ['manager', 'deputy_manager', 'storekeeper', 'deputy_storekeeper'].includes(role);
+        const canEdit = ['manager', 'financial_controller'].includes(role);
 
         let content = '';
         if (isPOView) {
@@ -228,7 +236,7 @@ window.renderInventory = async function(c) {
 };
 
 window.addProductModal = function() {
-    if(!['manager','overall_storekeeper'].includes(window.profile.role)) return;
+    if(!['manager', 'deputy_manager', 'storekeeper'].includes(window.profile.role)) return;
     const unitOpts = ALL_UNITS.map(u => `<option value="${u}">${u}</option>`).join('');
     const catOpts = PRODUCT_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('');
     const currOpts = ALL_CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
@@ -302,26 +310,15 @@ window.execCreatePO = async function() {
 // --- FIX: RECEIVE FUNCTION ---
 window.openReceiveModal = async function(poId) {
     try {
-        const { data: items, error } = await supabase.from('po_items')
-            .select('*, products!fk_po_items_products_final(name)')
-            .eq('po_id', poId);
-
+        const { data: items, error } = await supabase.from('po_items').select('*, products!fk_po_items_products_final(name)').eq('po_id', poId);
         if (error) throw error;
-        
         const itemRows = items.map(i => {
             const rem = i.quantity - (i.received_qty || 0);
             if(rem <= 0) return '';
-            const pName = i.products ? i.products.name : 'Unknown Item';
-            return `<div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded border"><div class="w-1/2"><span class="block text-xs font-bold uppercase">${pName}</span><span class="text-[10px] text-slate-500">Ord: ${i.quantity} | Rec: ${i.received_qty}</span></div><div class="w-1/2 flex justify-end gap-2"><span class="text-[10px] font-bold mt-2">Now:</span><input type="number" class="rec-inp w-20 input-field text-center text-blue-600 font-bold" data-id="${i.id}" data-pid="${i.product_id}" data-cost="${i.unit_cost}" max="${rem}" placeholder="${rem}"></div></div>`;
+            return `<div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded border"><div class="w-1/2"><span class="block text-xs font-bold uppercase">${i.products?.name}</span><span class="text-[10px] text-slate-500">Ord: ${i.quantity} | Rec: ${i.received_qty}</span></div><div class="w-1/2 flex justify-end gap-2"><span class="text-[10px] font-bold mt-2">Now:</span><input type="number" class="rec-inp w-20 input-field text-center text-blue-600 font-bold" data-id="${i.id}" data-pid="${i.product_id}" data-cost="${i.unit_cost}" max="${rem}" placeholder="${rem}"></div></div>`;
         }).join('');
-        
         if(!itemRows) return window.showNotification("Fully Received", "success");
-        
-        document.getElementById('modal-content').innerHTML = `
-            <h3 class="font-bold text-lg mb-4 text-center">Receive Stock (GRN)</h3>
-            <p class="text-xs text-center text-slate-400 mb-6">PO: ${poId.split('-')[0]}</p>
-            <div class="mb-6 max-h-[300px] overflow-y-auto">${itemRows}</div>
-            <button onclick="window.execReceivePO('${poId}')" class="btn-primary w-full bg-blue-600">CONFIRM RECEIPT</button>`;
+        document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 text-center">Receive Stock (GRN)</h3><p class="text-xs text-center text-slate-400 mb-6">PO: ${poId.split('-')[0]}</p><div class="mb-6 max-h-[300px] overflow-y-auto">${itemRows}</div><button onclick="window.execReceivePO('${poId}')" class="btn-primary w-full bg-blue-600">CONFIRM RECEIPT</button>`;
         document.getElementById('modal').style.display = 'flex';
     } catch (e) { handleError(e, "Open Receive Modal"); }
 };
@@ -340,21 +337,11 @@ window.execReceivePO = async function(poId) {
 window.issueModal = async (name, id, fromLoc) => { try { window.selectedDestinationId = null; const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).neq('id', fromLoc); const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Move: ${name}</h3><div class="grid grid-cols-2 gap-2 mb-4 max-h-40 overflow-y-auto">${html}</div><div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div><button onclick="window.execIssue('${id}', '${fromLoc}')" class="btn-primary">TRANSFER</button>`; document.getElementById('modal').style.display = 'flex'; } catch(e) { handleError(e, "Issue Modal"); } };
 window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white')); el.classList.add('bg-slate-900', 'text-white'); window.selectedDestinationId = id; };
 
-// --- EXEC ISSUE (UPDATED to write to stock_requests) ---
 window.execIssue = async (pid, fromLoc) => { 
     const qty = document.getElementById('tQty').value; 
     if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error"); 
     try { 
-        // Direct Insert to stock_requests to ensure authorization flow
-        const { error } = await supabase.from('stock_requests').insert({
-            organization_id: window.profile.organization_id,
-            requester_id: window.profile.id,
-            product_id: pid,
-            from_location_id: fromLoc,
-            to_location_id: window.selectedDestinationId,
-            quantity: qty,
-            status: 'pending'
-        });
+        const { error } = await supabase.from('stock_requests').insert({ organization_id: window.profile.organization_id, requester_id: window.profile.id, product_id: pid, from_location_id: fromLoc, to_location_id: window.selectedDestinationId, quantity: qty, status: 'pending' });
         if(error) throw error;
         document.getElementById('modal').style.display = 'none'; 
         window.showNotification("Request Sent for Approval", "success"); 
@@ -385,73 +372,38 @@ window.remCart = function(id) { window.cart=window.cart.filter(c=>c.id!==id); wi
 window.confirmCheckout = function() { if(!window.cart.length) return; window.premiumConfirm(`Confirm ${window.selectedPaymentMethod.toUpperCase()} Sale?`, "Charge this amount.", "Charge", window.doCheckout); };
 window.doCheckout = async function() { try { await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id, window.selectedPaymentMethod); window.showNotification("Sale Completed Successfully", "success"); window.cart=[]; window.renderCart(); window.router('bar'); } catch(e) { window.showNotification(e.message, "error"); } };
 
-// --- APPROVALS (UPDATED WITH RICH DETAILS & CONVERSION VISIBILITY) ---
+// --- APPROVALS (SMART DISPLAY) ---
 window.renderApprovals = async function(c) {
     try {
-        // 1. Fetch Stock Transfers (Moves)
-        const { data: reqs } = await supabase.from('stock_requests')
-            .select(`*, products(name, unit, conversion_factor), from_loc:from_location_id(name), to_loc:to_location_id(name, type)`)
-            .eq('organization_id', window.profile.organization_id)
-            .eq('status', 'pending');
+        const { data: reqs } = await supabase.from('stock_requests').select(`*, products(name, unit, conversion_factor), from_loc:from_location_id(name), to_loc:to_location_id(name, type)`).eq('organization_id', window.profile.organization_id).eq('status', 'pending');
+        const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
 
-        // 2. Fetch Admin Requests (Edits, Voids, Suspensions)
-        const { data: changes } = await supabase.from('change_requests')
-            .select('*, requester:requester_id(full_name)')
-            .eq('organization_id', window.profile.organization_id)
-            .eq('status', 'pending');
+        let transferRows = (reqs && reqs.length > 0) ? reqs.map(r => {
+            const factor = r.products?.conversion_factor || 1;
+            const isGoingToDepartment = r.to_loc?.type === 'department';
+            const incomingQty = isGoingToDepartment ? (r.quantity * factor) : r.quantity;
+            let conversionText = '';
+            if (factor > 1 && isGoingToDepartment) conversionText = `<span class="block text-[10px] text-green-600 font-bold bg-green-50 px-2 py-1 rounded mt-1">⚠️ Converting to: ${incomingQty} Pcs (Retail)</span>`;
+            else if (factor > 1 && !isGoingToDepartment) conversionText = `<span class="block text-[10px] text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded mt-1">ℹ️ Moving as Bulk: ${r.quantity} Crates</span>`;
 
-        let transferRows = '';
-        if (reqs && reqs.length > 0) {
-            transferRows = reqs.map(r => {
-                const factor = r.products?.conversion_factor || 1;
-                const isGoingToDepartment = r.to_loc?.type === 'department';
-                const incomingQty = isGoingToDepartment ? (r.quantity * factor) : r.quantity;
-                let conversionText = '';
-                if (factor > 1 && isGoingToDepartment) {
-                    conversionText = `<span class="block text-[10px] text-green-600 font-bold bg-green-50 px-2 py-1 rounded mt-1">⚠️ Converting to: ${incomingQty} Pcs (Retail)</span>`;
-                } else if (factor > 1 && !isGoingToDepartment) {
-                    conversionText = `<span class="block text-[10px] text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded mt-1">ℹ️ Moving as Bulk: ${r.quantity} Crates</span>`;
-                }
+            return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td><td class="p-6"><div class="text-blue-600 font-mono font-bold text-lg">${r.quantity} <span class="text-xs text-slate-400">${r.products?.unit}</span></div>${conversionText}</td><td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name} <br><span class="text-[9px] text-slate-400">(${r.to_loc?.type})</span></td><td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td></tr>`;
+        }).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>';
 
-                return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition">
-                    <td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td>
-                    <td class="p-6">
-                        <div class="text-blue-600 font-mono font-bold text-lg">${r.quantity} <span class="text-xs text-slate-400">${r.products?.unit}</span></div>
-                        ${conversionText}
-                    </td>
-                    <td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name} <br><span class="text-[9px] text-slate-400">(${r.to_loc?.type})</span></td>
-                    <td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td>
-                </tr>`;
-            }).join('');
-        } else {
-            transferRows = '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>';
-        }
-
-        let adminRows = '';
-        if (changes && changes.length > 0) {
-            adminRows = changes.map(r => {
-                let details = '';
-                if (r.action === 'EDIT_INVENTORY') {
-                    details = `<div class="mt-1 text-xs text-slate-600 bg-yellow-50 p-2 rounded border border-yellow-100"><span class="block font-bold">New Qty: ${r.new_data?.new_qty}</span><span class="block italic">Reason: "${r.new_data?.reason}"</span></div>`;
-                } else if (r.action === 'VOID') {
-                    details = `<div class="mt-1 text-xs text-red-600 bg-red-50 p-2 rounded border border-red-100 font-bold">Request to VOID Transaction</div>`;
-                } else if (r.action === 'SUSPEND_USER') {
-                    details = `<div class="mt-1 text-xs text-slate-600 font-bold">Action: Block Access</div>`;
-                } else if (r.action === 'DELETE_PRODUCT') {
-                    details = `<div class="mt-1 text-xs text-red-600 font-bold">Action: Permanently Delete Item</div>`;
-                }
-                return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action.replace('_', ' ')}</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div>${details}</td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`;
-            }).join('');
-        } else {
-            adminRows = '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>';
-        }
+        let adminRows = (changes && changes.length > 0) ? changes.map(r => {
+            let details = '';
+            if (r.action === 'EDIT_INVENTORY') details = `<div class="mt-1 text-xs text-slate-600 bg-yellow-50 p-2 rounded border border-yellow-100"><span class="block font-bold">New Qty: ${r.new_data?.new_qty}</span><span class="block italic">Reason: "${r.new_data?.reason}"</span></div>`;
+            else if (r.action === 'VOID') details = `<div class="mt-1 text-xs text-red-600 bg-red-50 p-2 rounded border border-red-100 font-bold">Request to VOID Transaction</div>`;
+            else if (r.action === 'SUSPEND_USER') details = `<div class="mt-1 text-xs text-slate-600 font-bold">Action: Block Access</div>`;
+            else if (r.action === 'DELETE_PRODUCT') details = `<div class="mt-1 text-xs text-red-600 font-bold">Action: Permanently Delete Item</div>`;
+            return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action.replace('_', ' ')}</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div>${details}</td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`;
+        }).join('') : '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>';
 
         c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1><div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${transferRows}</tbody></table></div></div><div><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust/Suspend)</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${adminRows}</tbody></table></div></div>`;
     } catch(e) { handleError(e, "Render Approvals"); }
 };
 
 window.confirmApprove = function(id) { 
-    window.premiumConfirm("Authorize Transfer?", "Move stock and apply conversion?", "Authorize", async () => { 
+    window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { 
         const { error } = await supabase.rpc('respond_to_approval', { p_request_id: id, p_action: 'approved', p_reviewer_id: window.profile.id });
         if(error) window.showNotification(error.message, "error");
         else { window.showNotification("Authorized", "success"); window.router('approvals'); }
@@ -466,30 +418,18 @@ window.approveChange = function(id) {
     }); 
 };
 
-// --- STAFF & INVITES (UPDATED with Invited By & Suspend) ---
+// --- STAFF & INVITES ---
 window.renderStaff = async function(c) {
     try {
         const { data: staff } = await supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id);
         const { data: invites } = await supabase.from('staff_invites').select(`*, inviter:invited_by(full_name)`).eq('organization_id', window.profile.organization_id).eq('status', 'pending');
-
         const canSuspend = ['manager', 'financial_controller'].includes(window.profile.role);
 
         c.innerHTML = `
         <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.openInviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
-        
-        ${(invites && invites.length > 0) ? `
-        <div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Pending Invites</h3>
-        <div class="bg-yellow-50 rounded-3xl border border-yellow-200 shadow-sm overflow-hidden">
-            <table class="w-full text-left"><tbody>${invites.map(i => `<tr class="border-b border-yellow-100 last:border-0"><td class="p-4 font-bold text-slate-700">${i.email}<br><span class="text-[9px] text-yellow-600 font-normal">Invited By: ${i.inviter?.full_name || 'Admin'}</span></td><td class="text-xs uppercase">${i.role.replace('_', ' ')}</td><td class="text-xs font-bold text-yellow-600 uppercase">PENDING</td><td class="text-right pr-6"><button class="text-[10px] text-red-500 font-bold border border-red-200 px-2 py-1 rounded hover:bg-red-50">CANCEL</button></td></tr>`).join('')}</tbody></table>
-        </div></div>` : ''}
-
+        ${(invites && invites.length > 0) ? `<div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Pending Invites</h3><div class="bg-yellow-50 rounded-3xl border border-yellow-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${invites.map(i => `<tr class="border-b border-yellow-100 last:border-0"><td class="p-4 font-bold text-slate-700">${i.email}<br><span class="text-[9px] text-yellow-600 font-normal">Invited By: ${i.inviter?.full_name || 'Admin'}</span></td><td class="text-xs uppercase">${i.role.replace('_', ' ')}</td><td class="text-xs font-bold text-yellow-600 uppercase">PENDING</td><td class="text-right pr-6"><button class="text-[10px] text-red-500 font-bold border border-red-200 px-2 py-1 rounded hover:bg-red-50">CANCEL</button></td></tr>`).join('')}</tbody></table></div></div>` : ''}
         <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Active Staff</h3>
-        <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8">
-            <table class="w-full text-left">
-                <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead>
-                <tbody>${(staff||[]).map(s => `<tr class="border-b last:border-0 hover:bg-slate-50 transition"><td class="p-4 font-bold text-slate-700">${s.full_name}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td><td class="text-xs uppercase">${s.role.replace('_', ' ')}</td><td class="text-xs uppercase">${s.locations?.name || 'Global'}</td><td class="text-right pr-6 flex justify-end gap-2 items-center h-full pt-4"><button onclick="window.viewStaffDetails('${s.id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">LOGS</button>${(canSuspend && s.id !== window.profile.id) ? `<button onclick="window.requestSuspend('${s.id}')" class="text-[10px] text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-50">SUSPEND</button>` : ''}</td></tr>`).join('')}</tbody>
-            </table>
-        </div>`;
+        <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8"><table class="w-full text-left"><thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead><tbody>${(staff||[]).map(s => `<tr class="border-b last:border-0 hover:bg-slate-50 transition"><td class="p-4 font-bold text-slate-700">${s.full_name}<br><span class="text-[10px] text-slate-400 font-normal">${s.email}</span></td><td class="text-xs uppercase">${s.role.replace('_', ' ')}</td><td class="text-xs uppercase">${s.locations?.name || 'Global'}</td><td class="text-right pr-6 flex justify-end gap-2 items-center h-full pt-4"><button onclick="window.viewStaffDetails('${s.id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-100">LOGS</button>${(canSuspend && s.id !== window.profile.id) ? `<button onclick="window.requestSuspend('${s.id}')" class="text-[10px] text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-50">SUSPEND</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
     } catch(e) { handleError(e, "Render Staff"); }
 };
 
@@ -513,10 +453,7 @@ window.execInvite = async function() {
         if (role !== 'financial_controller' && !locId) return window.showNotification("Select a Location", "error");
         if (role === 'financial_controller') locId = null;
 
-        const { error } = await supabase.from('staff_invites').insert({
-            organization_id: window.profile.organization_id,
-            email, role, assigned_location_id: locId, status: 'pending', invited_by: window.profile.id
-        });
+        const { error } = await supabase.from('staff_invites').insert({ organization_id: window.profile.organization_id, email, role, assigned_location_id: locId, status: 'pending', invited_by: window.profile.id });
         if (error) throw error;
         document.getElementById('invite-modal').style.display = 'none';
         window.showNotification("Invite Sent", "success");
@@ -527,49 +464,37 @@ window.execInvite = async function() {
 window.viewStaffDetails = async function(id) {
     try {
         const { data: logs } = await supabase.from('audit_logs').select('*').eq('user_id', id).order('created_at', {ascending: false}).limit(20);
-        document.getElementById('activity-list').innerHTML = (logs||[]).map(l => `
-            <div class="text-[10px] border-b border-slate-200 py-2">
-                <span class="font-bold text-slate-700">${l.action}</span>
-                <span class="block text-slate-500 italic">${l.description || 'No details'}</span>
-                <span class="block text-slate-400 text-[9px]">${new Date(l.created_at).toLocaleString()}</span>
-            </div>`).join('');
+        document.getElementById('activity-list').innerHTML = (logs||[]).map(l => `<div class="text-[10px] border-b border-slate-200 py-2"><span class="font-bold text-slate-700">${l.action}</span><span class="block text-slate-500 italic">${l.description || 'No details'}</span><span class="block text-slate-400 text-[9px]">${new Date(l.created_at).toLocaleString()}</span></div>`).join('');
         document.getElementById('profile-viewer').style.display = 'flex';
     } catch(e) { handleError(e, "View Staff Details"); }
 };
 
-// --- ENTERPRISE REPORTING (NOW UNIFIED) ---
+// --- ENTERPRISE REPORTING (CLEAN & PROFESSIONAL) ---
 window.renderReports = async function(c) {
     try {
-        // 1. Fetch Financial Transactions (Sales/Purchases/Transfers)
-        const { data: trans } = await supabase.from('transactions')
-            .select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name)`)
-            .eq('organization_id', window.profile.organization_id)
-            .order('created_at', { ascending: false }).limit(2000);
+        const { data: trans } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name, email, role)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(2000);
+        const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name, email)').eq('organization_id', window.profile.organization_id).eq('status', 'approved');
+        const { data: invites } = await supabase.from('staff_invites').select('*, inviter:invited_by(full_name, email)').eq('organization_id', window.profile.organization_id);
 
-        // 2. Fetch Admin Changes (Approved Edits/Voids/Deletes)
-        const { data: changes } = await supabase.from('change_requests')
-            .select('*, requester:requester_id(full_name)')
-            .eq('organization_id', window.profile.organization_id)
-            .eq('status', 'approved');
-
-        // 3. Fetch Invites
-        const { data: invites } = await supabase.from('staff_invites')
-            .select('*, inviter:invited_by(full_name)')
-            .eq('organization_id', window.profile.organization_id);
-
-        // MERGE DATA INTO UNIFIED LOG
-        // We map everything to a standard format for the table
         const combinedLogs = [];
 
-        // Add Transactions
+        // Helper to format User Display
+        const formatUser = (u) => {
+            if(!u) return 'SYSTEM';
+            if(u.full_name) return u.full_name;
+            if(u.email) return u.email.split('@')[0];
+            return 'Unknown';
+        };
+
         (trans||[]).forEach(t => {
             combinedLogs.push({
                 id: t.id,
                 date: t.created_at,
-                type: t.type, // sale, purchase, transfer
-                description: `${t.products?.name} (${t.quantity} qty)`,
-                user: t.profiles?.full_name || 'System',
-                location: t.from_loc?.name ? `${t.from_loc.name} -> ${t.locations?.name}` : t.locations?.name || 'Main',
+                type: t.type,
+                desc_main: t.products?.name || 'Unknown Item',
+                desc_sub: `Qty: ${window.formatNumber(t.quantity)}`,
+                user: formatUser(t.profiles),
+                location: t.from_loc?.name ? `${t.from_loc.name} → ${t.locations?.name}` : (t.locations?.name || 'Main Store'),
                 value: t.total_value,
                 profit: t.gross_profit,
                 rawData: t,
@@ -577,14 +502,15 @@ window.renderReports = async function(c) {
             });
         });
 
-        // Add Admin Changes
         (changes||[]).forEach(ch => {
+            let readableAction = ch.action.replace('EDIT_INVENTORY', 'Stock Adjustment').replace('DELETE_PRODUCT', 'Product Deletion').replace('_', ' ');
             combinedLogs.push({
                 id: ch.id,
                 date: ch.created_at,
-                type: 'admin_action',
-                description: `ACTION: ${ch.action} - ${ch.new_data?.reason || 'No reason'}`,
-                user: ch.requester?.full_name || 'Admin',
+                type: 'admin',
+                desc_main: readableAction,
+                desc_sub: ch.new_data?.reason || 'Authorized by Admin',
+                user: formatUser(ch.requester),
                 location: 'System',
                 value: 0,
                 profit: 0,
@@ -593,14 +519,14 @@ window.renderReports = async function(c) {
             });
         });
 
-        // Add Invites
         (invites||[]).forEach(inv => {
             combinedLogs.push({
                 id: inv.id,
                 date: inv.created_at,
-                type: 'team_invite',
-                description: `INVITE: ${inv.email} as ${inv.role}`,
-                user: inv.inviter?.full_name || 'Admin',
+                type: 'invite',
+                desc_main: `Invite: ${inv.role}`,
+                desc_sub: inv.email,
+                user: formatUser(inv.inviter),
                 location: '-',
                 value: 0,
                 profit: 0,
@@ -609,22 +535,17 @@ window.renderReports = async function(c) {
             });
         });
 
-        // Sort by Date (Newest First)
         window.currentLogs = combinedLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
 
         const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
         const staffOpts = window.cachedStaff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join('');
         const template = document.getElementById('report-filters-template').content.cloneNode(true);
         
-        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Unified Enterprise Report</h1>`;
+        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Enterprise Report</h1>`;
         c.appendChild(template);
         document.getElementById('rLoc').innerHTML += locOpts;
         document.getElementById('rStaff').innerHTML += staffOpts;
-        
-        // Add extra options to Type Filter
-        const typeSelect = document.getElementById('rType');
-        if(typeSelect) typeSelect.innerHTML += `<option value="admin_action">Admin Actions</option><option value="team_invite">Team Invites</option>`;
-
+        document.getElementById('rType').innerHTML += `<option value="admin">Admin Actions</option><option value="invite">Team Invites</option>`;
         document.getElementById('rCat').innerHTML += PRODUCT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
 
         c.insertAdjacentHTML('beforeend', `
@@ -633,19 +554,19 @@ window.renderReports = async function(c) {
                 <div class="bg-white p-6 border rounded-xl shadow-sm"><span class="text-xs text-slate-400 font-bold uppercase tracking-widest">Gross Profit</span><div id="repProf" class="text-3xl font-bold mt-1 text-green-600">0.00</div></div>
             </div>
             <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                <table class="w-full text-left">
+                <table class="w-full text-left table-auto">
                     <thead class="bg-slate-50 border-b">
                         <tr>
-                            <th class="p-4 text-xs font-bold uppercase text-slate-500">Date/Time</th>
-                            <th class="text-xs font-bold uppercase text-slate-500">Type</th>
-                            <th class="text-xs font-bold uppercase text-slate-500">Description</th>
-                            <th class="text-xs font-bold uppercase text-slate-500">User (Done By)</th>
-                            <th class="text-xs font-bold uppercase text-slate-500">Location</th>
-                            <th class="text-right text-xs font-bold uppercase text-slate-500">Value</th>
-                            <th class="text-right text-xs font-bold uppercase text-slate-500 pr-4">Action</th>
+                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Date</th>
+                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Type</th>
+                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Description</th>
+                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">User</th>
+                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Location</th>
+                            <th class="p-4 text-right text-xs font-bold uppercase text-slate-500 tracking-wider">Value</th>
+                            <th class="p-4 text-right text-xs font-bold uppercase text-slate-500 tracking-wider">Action</th>
                         </tr>
                     </thead>
-                    <tbody id="logsBody"></tbody>
+                    <tbody id="logsBody" class="divide-y divide-slate-100"></tbody>
                 </table>
             </div>`);
         window.filterReport();
@@ -659,97 +580,62 @@ window.filterReport = function() {
     const search = document.getElementById('rSearch')?.value.toLowerCase();
     
     let f = window.currentLogs;
-    
-    // Filters
     if(type && type !== 'all') f = f.filter(l => l.type === type);
-    if(staff && staff !== 'all') f = f.filter(l => l.user === staff || (l.rawData.user_id === staff));
-    if(search) f = f.filter(l => l.description.toLowerCase().includes(search) || l.user.toLowerCase().includes(search));
+    if(staff && staff !== 'all') f = f.filter(l => l.rawData.user_id === staff);
+    if(search) f = f.filter(l => l.desc_main.toLowerCase().includes(search) || l.user.toLowerCase().includes(search));
 
-    // Calculate Financials only from 'financial' category
     const revenue = f.filter(l => l.category === 'financial' && l.type === 'sale').reduce((sum, l) => sum + (l.value || 0), 0);
     const profit = f.filter(l => l.category === 'financial' && l.type === 'sale').reduce((sum, l) => sum + (l.profit || 0), 0);
 
     document.getElementById('repRev').innerHTML = window.formatPrice(revenue);
     document.getElementById('repProf').innerHTML = window.formatPrice(profit);
     
-    document.getElementById('logsBody').innerHTML = f.map(l => `
-        <tr onclick="window.openReportDetails('${l.id}')" class="border-b hover:bg-blue-50 cursor-pointer transition group">
-            <td class="p-4 text-xs font-bold text-slate-500">${new Date(l.date).toLocaleString()}</td>
-            <td class="text-xs font-bold uppercase"><span class="px-2 py-1 rounded ${l.category==='admin'?'bg-red-50 text-red-600':'bg-slate-100'}">${l.type.replace('_',' ')}</span></td>
-            <td class="text-xs font-bold text-slate-700">${l.description}</td>
-            <td class="text-xs text-slate-600 uppercase font-bold">${l.user}</td>
-            <td class="text-xs text-slate-500 uppercase">${l.location}</td>
-            <td class="text-right font-mono text-xs font-bold text-slate-900">${l.value ? window.formatPrice(l.value) : '-'}</td>
-            <td class="text-right pr-4"><span class="text-[10px] bg-white border px-2 py-1 rounded text-slate-400 group-hover:border-blue-300 group-hover:text-blue-500">VIEW</span></td>
-        </tr>`).join('');
+    document.getElementById('logsBody').innerHTML = f.map(l => {
+        let badgeClass = 'bg-slate-100 text-slate-600';
+        if(l.type === 'sale') badgeClass = 'bg-green-100 text-green-700';
+        else if(l.type === 'transfer') badgeClass = 'bg-blue-100 text-blue-700';
+        else if(l.type === 'admin' || l.type === 'void') badgeClass = 'bg-red-100 text-red-700';
+        else if(l.type === 'invite') badgeClass = 'bg-yellow-100 text-yellow-700';
+
+        return `<tr onclick="window.openReportDetails('${l.id}')" class="hover:bg-slate-50 cursor-pointer transition group">
+            <td class="p-4 whitespace-nowrap text-xs font-bold text-slate-500">${new Date(l.date).toLocaleDateString()}<br><span class="text-[10px] font-normal">${new Date(l.date).toLocaleTimeString()}</span></td>
+            <td class="p-4 whitespace-nowrap"><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${badgeClass}">${l.type}</span></td>
+            <td class="p-4"><div class="font-bold text-sm text-slate-800 truncate max-w-[200px]" title="${l.desc_main}">${l.desc_main}</div><div class="text-[10px] text-slate-500 truncate max-w-[200px]">${l.desc_sub}</div></td>
+            <td class="p-4 whitespace-nowrap text-xs font-bold text-slate-700 uppercase">${l.user}</td>
+            <td class="p-4 whitespace-nowrap text-xs text-slate-500 uppercase">${l.location}</td>
+            <td class="p-4 whitespace-nowrap text-right font-mono text-xs font-bold text-slate-900">${l.value ? window.formatPrice(l.value) : '-'}</td>
+            <td class="p-4 whitespace-nowrap text-right"><span class="text-[10px] font-bold border border-slate-200 px-3 py-1 rounded-full text-slate-400 group-hover:border-blue-500 group-hover:text-blue-600 transition">VIEW</span></td>
+        </tr>`;
+    }).join('');
 };
 
 window.openReportDetails = function(id) {
     const item = window.currentLogs.find(l => l.id === id);
     if(!item) return;
-
-    let content = '';
     const d = item.rawData;
-
-    if (item.type === 'sale' || item.type === 'purchase' || item.type === 'transfer') {
-        content = `
-            <div class="space-y-4">
-                <div class="bg-slate-50 p-4 rounded-xl border">
-                    <h4 class="font-bold text-sm uppercase text-slate-500 mb-2">Transaction Details</h4>
-                    <p><strong>Item:</strong> ${d.products?.name}</p>
-                    <p><strong>Quantity:</strong> ${d.quantity}</p>
-                    <p><strong>Type:</strong> ${d.type.toUpperCase()}</p>
-                    <p><strong>Date:</strong> ${new Date(d.created_at).toLocaleString()}</p>
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                        <span class="text-xs text-slate-500 uppercase">From</span>
-                        <p class="font-bold">${d.from_loc?.name || 'External/Stock'}</p>
-                    </div>
-                    <div class="bg-green-50 p-4 rounded-xl border border-green-100">
-                        <span class="text-xs text-slate-500 uppercase">To</span>
-                        <p class="font-bold">${d.locations?.name || 'Client'}</p>
-                    </div>
-                </div>
-                <div class="bg-slate-900 text-white p-4 rounded-xl flex justify-between items-center">
-                    <span>Total Value</span>
-                    <span class="font-mono font-bold text-xl">${window.formatPrice(d.total_value)}</span>
-                </div>
-                ${d.gross_profit ? `<p class="text-center text-xs text-green-600 font-bold">Profit: ${window.formatPrice(d.gross_profit)}</p>` : ''}
+    let content = `
+        <div class="space-y-4">
+            <div class="flex justify-between items-start">
+                <div><h3 class="font-bold text-lg uppercase text-slate-800">${item.desc_main}</h3><p class="text-xs text-slate-500">${new Date(item.date).toLocaleString()}</p></div>
+                <span class="px-3 py-1 rounded text-xs font-bold uppercase bg-slate-100">${item.type}</span>
             </div>
-        `;
-    } else if (item.type === 'admin_action') {
-        content = `
-            <div class="bg-red-50 p-6 rounded-xl border border-red-100 text-center">
-                <h3 class="text-red-600 font-bold text-lg mb-2">ADMIN ACTION: ${d.action}</h3>
-                <p class="text-slate-600 mb-4">${new Date(d.created_at).toLocaleString()}</p>
-                <div class="text-left bg-white p-4 rounded border">
-                    <p class="text-sm"><strong>Performed By:</strong> ${item.user}</p>
-                    <p class="text-sm mt-2"><strong>Reason/Details:</strong></p>
-                    <pre class="text-xs bg-slate-50 p-2 rounded mt-1 overflow-auto">${JSON.stringify(d.new_data || d, null, 2)}</pre>
-                </div>
+            <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm space-y-2">
+                <div class="flex justify-between"><span>User:</span> <span class="font-bold">${item.user}</span></div>
+                <div class="flex justify-between"><span>Location:</span> <span class="font-bold">${item.location}</span></div>
+                <div class="flex justify-between"><span>Details:</span> <span>${item.desc_sub}</span></div>
             </div>
-        `;
-    } else if (item.type === 'team_invite') {
-        content = `
-            <div class="bg-yellow-50 p-6 rounded-xl border border-yellow-100 text-center">
-                <h3 class="text-yellow-700 font-bold text-lg mb-2">TEAM INVITATION</h3>
-                <p><strong>Email:</strong> ${d.email}</p>
-                <p><strong>Role:</strong> ${d.role}</p>
-                <p><strong>Status:</strong> ${d.status}</p>
-                <p class="mt-4 text-xs text-slate-500">Invited by: ${item.user}</p>
-            </div>
-        `;
-    }
-
+            ${item.value ? `<div class="bg-slate-900 text-white p-4 rounded-xl flex justify-between items-center"><span>Total Value</span><span class="font-mono font-bold text-xl">${window.formatPrice(item.value)}</span></div>` : ''}
+            ${item.profit ? `<p class="text-center text-xs text-green-600 font-bold">Profit: ${window.formatPrice(item.profit)}</p>` : ''}
+            ${item.category === 'admin' ? `<div class="text-xs text-slate-500 bg-red-50 p-3 rounded border border-red-100"><strong>System Note:</strong><br>${JSON.stringify(d.new_data || d, null, 2)}</div>` : ''}
+        </div>`;
     document.getElementById('modal-content').innerHTML = content;
     document.getElementById('modal').style.display = 'flex';
 };
 
 window.exportCSV = () => {
-    let rows=[["Date","Type","Description","User","Location","Value","Profit"]];
+    let rows=[["Date","Type","Description","Details","User","Location","Value","Profit"]];
     window.currentLogs.forEach(l=>{
-        rows.push([new Date(l.date).toLocaleString(),l.type,l.description,l.user,l.location,l.value,l.profit]);
+        rows.push([new Date(l.date).toLocaleString(), l.type, l.desc_main, l.desc_sub, l.user, l.location, l.value, l.profit]);
     });
     let c="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n");
     let link=document.createElement("a"); link.href=encodeURI(c); link.download="enterprise_report.csv"; link.click();
