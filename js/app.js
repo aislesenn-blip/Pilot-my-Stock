@@ -1,5 +1,5 @@
 import { getSession, logout } from './auth.js';
-import { getInventory, processBarSale, getPendingApprovals } from './services.js'; // Removed unused imports to use direct logic
+import { getInventory, processBarSale, getPendingApprovals } from './services.js'; 
 import { supabase } from './supabase.js';
 
 // --- GLOBALS ---
@@ -302,7 +302,7 @@ window.execCreatePO = async function() {
     document.getElementById('modal').style.display = 'none'; window.showNotification("LPO Created", "success"); window.currentInvView = 'po'; window.router('inventory');
 };
 
-// --- FIX: RECEIVE FUNCTION (HII NDIYO ILIKUWA INAGOMA) ---
+// --- FIX: RECEIVE FUNCTION ---
 window.openReceiveModal = async function(poId) {
     try {
         const { data: items, error } = await supabase.from('po_items')
@@ -343,7 +343,7 @@ window.execReceivePO = async function(poId) {
 window.issueModal = async (name, id, fromLoc) => { try { window.selectedDestinationId = null; const { data: locs } = await supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id).neq('id', fromLoc); const html = locs.map(l => `<div onclick="window.selectDest(this, '${l.id}')" class="dest-card border p-3 rounded cursor-pointer hover:bg-slate-50 text-center"><span class="font-bold text-xs uppercase">${l.name}</span></div>`).join(''); document.getElementById('modal-content').innerHTML = `<h3 class="font-bold text-lg mb-4 uppercase text-center">Move: ${name}</h3><div class="grid grid-cols-2 gap-2 mb-4 max-h-40 overflow-y-auto">${html}</div><div class="input-group"><label class="input-label">Quantity</label><input id="tQty" type="number" class="input-field"></div><button onclick="window.execIssue('${id}', '${fromLoc}')" class="btn-primary">TRANSFER</button>`; document.getElementById('modal').style.display = 'flex'; } catch(e) { handleError(e, "Issue Modal"); } };
 window.selectDest = (el, id) => { document.querySelectorAll('.dest-card').forEach(c => c.classList.remove('bg-slate-900', 'text-white')); el.classList.add('bg-slate-900', 'text-white'); window.selectedDestinationId = id; };
 
-// --- FIXED: EXEC ISSUE NOW WRITES TO STOCK_REQUESTS TABLE ---
+// --- EXEC ISSUE (UPDATED to write to stock_requests) ---
 window.execIssue = async (pid, fromLoc) => { 
     const qty = document.getElementById('tQty').value; 
     if(!window.selectedDestinationId || qty <= 0) return window.showNotification("Invalid Selection", "error"); 
@@ -388,24 +388,96 @@ window.remCart = function(id) { window.cart=window.cart.filter(c=>c.id!==id); wi
 window.confirmCheckout = function() { if(!window.cart.length) return; window.premiumConfirm(`Confirm ${window.selectedPaymentMethod.toUpperCase()} Sale?`, "Charge this amount.", "Charge", window.doCheckout); };
 window.doCheckout = async function() { try { await processBarSale(window.profile.organization_id, window.activePosLocationId, window.cart.map(c=>({product_id:c.id,qty:c.qty,price:c.price})), window.profile.id, window.selectedPaymentMethod); window.showNotification("Sale Completed Successfully", "success"); window.cart=[]; window.renderCart(); window.router('bar'); } catch(e) { window.showNotification(e.message, "error"); } };
 
-// --- APPROVALS (UPDATED to fetch both STOCK and ADMIN requests) ---
+// --- APPROVALS (UPDATED WITH RICH DETAILS & CONVERSION VISIBILITY) ---
 window.renderApprovals = async function(c) {
     try {
-        // Fetch Stock Requests (Movements)
-        const { data: reqs } = await supabase.from('stock_requests').select(`*, products(name), from_loc:from_location_id(name), to_loc:to_location_id(name)`).eq('organization_id', window.profile.organization_id).eq('status', 'pending');
-        // Fetch Admin Requests (Edits, Deletes, Suspensions)
-        const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name)').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
+        // 1. Fetch Stock Transfers (Moves)
+        const { data: reqs } = await supabase.from('stock_requests')
+            .select(`*, products(name, unit, conversion_factor), from_loc:from_location_id(name), to_loc:to_location_id(name)`)
+            .eq('organization_id', window.profile.organization_id)
+            .eq('status', 'pending');
+
+        // 2. Fetch Admin Requests (Edits, Voids, Suspensions)
+        const { data: changes } = await supabase.from('change_requests')
+            .select('*, requester:requester_id(full_name)')
+            .eq('organization_id', window.profile.organization_id)
+            .eq('status', 'pending');
+
+        let transferRows = '';
+        if (reqs && reqs.length > 0) {
+            transferRows = reqs.map(r => {
+                const factor = r.products?.conversion_factor || 1;
+                const incomingQty = r.quantity * factor;
+                const conversionText = factor > 1 
+                    ? `<span class="block text-[10px] text-green-600 font-bold bg-green-50 px-2 py-1 rounded mt-1">⚠️ Will arrive as: ${incomingQty} Pcs</span>` 
+                    : '';
+
+                return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition">
+                    <td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td>
+                    <td class="p-6">
+                        <div class="text-blue-600 font-mono font-bold text-lg">${r.quantity} <span class="text-xs text-slate-400">${r.products?.unit}</span></div>
+                        ${conversionText}
+                    </td>
+                    <td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td>
+                    <td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td>
+                </tr>`;
+            }).join('');
+        } else {
+            transferRows = '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>';
+        }
+
+        let adminRows = '';
+        if (changes && changes.length > 0) {
+            adminRows = changes.map(r => {
+                let details = '';
+                if (r.action === 'EDIT_INVENTORY') {
+                    details = `<div class="mt-1 text-xs text-slate-600 bg-yellow-50 p-2 rounded border border-yellow-100">
+                        <span class="block font-bold">New Qty: ${r.new_data?.new_qty}</span>
+                        <span class="block italic">Reason: "${r.new_data?.reason}"</span>
+                    </div>`;
+                } else if (r.action === 'VOID') {
+                    details = `<div class="mt-1 text-xs text-red-600 bg-red-50 p-2 rounded border border-red-100 font-bold">Request to VOID Transaction</div>`;
+                } else if (r.action === 'SUSPEND_USER') {
+                    details = `<div class="mt-1 text-xs text-slate-600 font-bold">Action: Block Access</div>`;
+                } else if (r.action === 'DELETE_PRODUCT') {
+                    details = `<div class="mt-1 text-xs text-red-600 font-bold">Action: Permanently Delete Item</div>`;
+                }
+
+                return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition">
+                    <td class="p-6">
+                        <div class="font-bold text-sm uppercase text-red-600">${r.action.replace('_', ' ')}</div>
+                        <div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div>
+                        ${details}
+                    </td>
+                    <td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td>
+                    <td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td>
+                </tr>`;
+            }).join('');
+        } else {
+            adminRows = '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>';
+        }
 
         c.innerHTML = `
         <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1>
-        <div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${(reqs||[]).length ? reqs.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td><td class="p-6"><div class="text-blue-600 font-mono font-bold text-lg">${r.quantity}</div><div class="text-xs text-slate-400 uppercase mt-1">Requested</div></td><td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td><td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td></tr>`).join('') : '<tr><td colspan="4" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No transfer requests.</td></tr>'}</tbody></table></div></div>
-        <div><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust/Suspend)</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${(changes||[]).length ? changes.map(r => `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action}</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div></td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`).join('') : '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>'}</tbody></table></div></div>`;
+        
+        <div class="mb-8">
+            <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3>
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <table class="w-full text-left"><tbody>${transferRows}</tbody></table>
+            </div>
+        </div>
+
+        <div>
+            <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust/Suspend)</h3>
+            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+                <table class="w-full text-left"><tbody>${adminRows}</tbody></table>
+            </div>
+        </div>`;
     } catch(e) { handleError(e, "Render Approvals"); }
 };
 
 window.confirmApprove = function(id) { 
     window.premiumConfirm("Authorize Transfer?", "Move stock and apply conversion?", "Authorize", async () => { 
-        // Direct call to database function
         const { error } = await supabase.rpc('respond_to_approval', { p_request_id: id, p_action: 'approved', p_reviewer_id: window.profile.id });
         if(error) window.showNotification(error.message, "error");
         else { window.showNotification("Authorized", "success"); window.router('approvals'); }
@@ -424,7 +496,6 @@ window.approveChange = function(id) {
 window.renderStaff = async function(c) {
     try {
         const { data: staff } = await supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id);
-        // Fetch invites with Inviter Name linked
         const { data: invites } = await supabase.from('staff_invites').select(`*, inviter:invited_by(full_name)`).eq('organization_id', window.profile.organization_id).eq('status', 'pending');
 
         const canSuspend = ['manager', 'financial_controller'].includes(window.profile.role);
