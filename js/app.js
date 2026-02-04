@@ -222,6 +222,7 @@ window.renderInventory = async function(c) {
             const { data: pos } = await supabase.from('purchase_orders').select('*, suppliers(name)').eq('organization_id', window.profile.organization_id).order('created_at', {ascending:false});
             content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Date</th><th>Supplier</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>${(pos||[]).map(p => `<tr class="border-b hover:bg-slate-50 transition"><td class="py-4 pl-4 text-xs font-bold text-slate-500">${new Date(p.created_at).toLocaleDateString()}</td><td class="text-sm font-bold uppercase">${p.suppliers?.name || 'Unknown'}</td><td class="text-sm font-mono font-bold text-slate-900">${window.formatPrice(p.total_cost)}</td><td><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${p.status==='Pending'?'bg-yellow-100 text-yellow-700':p.status==='Partial'?'bg-blue-100 text-blue-700':'bg-green-100 text-green-700'}">${p.status}</span></td><td>${p.status!=='Received'?`<button onclick="window.openReceiveModal('${p.id}')" class="text-[10px] bg-slate-900 text-white px-3 py-1 rounded font-bold">RECEIVE</button>`:'<span class="text-xs text-slate-300 font-bold">DONE</span>'}</td></tr>`).join('')}</tbody></table>`;
         } else {
+            // FIX: Using optional chaining for safety
             content = `<table class="w-full text-left border-collapse"><thead class="bg-slate-50 border-b"><tr><th class="p-4">Item</th>${showPrice?'<th>Cost</th>':''}<th>Store</th><th>Stock</th><th>Action</th></tr></thead><tbody>${(stock||[]).map(i => `<tr class="border-b hover:bg-slate-50 transition group"><td class="py-4 pl-4"><div class="font-bold text-sm uppercase">${i.products?.name || 'Deleted'}</div><div class="text-[10px] text-slate-400 font-bold uppercase mt-0.5">${i.products?.category || '-'}</div></td>${showPrice?`<td class="font-mono text-xs text-slate-500">${window.formatPrice(i.products?.cost_price)}</td>`:''} <td class="text-xs font-bold text-slate-500 uppercase">${i.locations?.name || 'Unknown'}</td><td class="font-mono font-bold text-lg text-slate-900">${i.quantity} <span class="text-[10px] text-slate-400 font-sans">${i.products?.unit || ''}</span></td><td class="flex gap-2 p-4 justify-end"><button onclick="window.issueModal('${i.products?.name}','${i.product_id}','${i.location_id}')" class="text-[10px] border px-2 py-1 rounded hover:bg-slate-900 hover:text-white transition">MOVE</button></td></tr>`).join('')}</tbody></table>`;
         }
 
@@ -299,16 +300,26 @@ window.execCreatePO = async function() {
     document.getElementById('modal').style.display = 'none'; window.showNotification("LPO Created", "success"); window.currentInvView = 'po'; window.router('inventory');
 };
 
+// --- FIX: RECEIVE FUNCTION (HII NDIYO ILIKUWA INAGOMA) ---
 window.openReceiveModal = async function(poId) {
     try {
-        const { data: items, error } = await supabase.from('po_items').select('*, products(name)').eq('po_id', poId);
+        // HAPA TUMEWEKA "!fk_po_items_products_final" ILI SUPABASE ISICHANGANYIKIWE
+        const { data: items, error } = await supabase.from('po_items')
+            .select('*, products!fk_po_items_products_final(name)')
+            .eq('po_id', poId);
+
         if (error) throw error;
+        
         const itemRows = items.map(i => {
             const rem = i.quantity - (i.received_qty || 0);
             if(rem <= 0) return '';
-            return `<div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded border"><div class="w-1/2"><span class="block text-xs font-bold uppercase">${i.products?.name || 'Unknown'}</span><span class="text-[10px] text-slate-500">Ord: ${i.quantity} | Rec: ${i.received_qty}</span></div><div class="w-1/2 flex justify-end gap-2"><span class="text-[10px] font-bold mt-2">Now:</span><input type="number" class="rec-inp w-20 input-field text-center text-blue-600 font-bold" data-id="${i.id}" data-pid="${i.product_id}" data-cost="${i.unit_cost}" max="${rem}" placeholder="${rem}"></div></div>`;
+            // Handle product name carefully
+            const pName = i.products ? i.products.name : 'Unknown Item';
+            return `<div class="flex justify-between items-center mb-3 bg-slate-50 p-3 rounded border"><div class="w-1/2"><span class="block text-xs font-bold uppercase">${pName}</span><span class="text-[10px] text-slate-500">Ord: ${i.quantity} | Rec: ${i.received_qty}</span></div><div class="w-1/2 flex justify-end gap-2"><span class="text-[10px] font-bold mt-2">Now:</span><input type="number" class="rec-inp w-20 input-field text-center text-blue-600 font-bold" data-id="${i.id}" data-pid="${i.product_id}" data-cost="${i.unit_cost}" max="${rem}" placeholder="${rem}"></div></div>`;
         }).join('');
+        
         if(!itemRows) return window.showNotification("Fully Received", "success");
+        
         document.getElementById('modal-content').innerHTML = `
             <h3 class="font-bold text-lg mb-4 text-center">Receive Stock (GRN)</h3>
             <p class="text-xs text-center text-slate-400 mb-6">PO: ${poId.split('-')[0]}</p>
@@ -372,12 +383,22 @@ window.renderApprovals = async function(c) {
 window.confirmApprove = function(id) { window.premiumConfirm("Authorize Transfer?", "Move stock?", "Authorize", async () => { await respondToApproval(id, 'approved', window.profile.id); window.showNotification("Authorized", "success"); window.router('approvals'); }); };
 window.approveChange = function(id) { window.premiumConfirm("Approve Change?", "Execute this request.", "Approve", async () => { await supabase.rpc('process_change_request', { p_request_id: id, p_status: 'approved', p_reviewer_id: window.profile.id }); window.showNotification("Executed", "success"); window.router('approvals'); }); };
 
-// --- STAFF ---
+// --- STAFF & INVITES (FIXED) ---
 window.renderStaff = async function(c) {
     try {
         const { data: staff } = await supabase.from('profiles').select('*, locations(name)').eq('organization_id', window.profile.organization_id);
+        const { data: invites } = await supabase.from('staff_invites').select('*').eq('organization_id', window.profile.organization_id).eq('status', 'pending');
+
         c.innerHTML = `
         <div class="flex justify-between items-center mb-8"><h1 class="text-3xl font-bold uppercase">Team</h1><button onclick="window.openInviteModal()" class="btn-primary w-auto px-6">INVITE</button></div>
+        
+        ${(invites && invites.length > 0) ? `
+        <div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Pending Invites</h3>
+        <div class="bg-yellow-50 rounded-3xl border border-yellow-200 shadow-sm overflow-hidden">
+            <table class="w-full text-left"><tbody>${invites.map(i => `<tr class="border-b border-yellow-100 last:border-0"><td class="p-4 font-bold text-slate-700">${i.email}</td><td class="text-xs uppercase">${i.role.replace('_', ' ')}</td><td class="text-xs font-bold text-yellow-600 uppercase">PENDING SIGNUP</td><td class="text-right pr-6"><button class="text-[10px] text-red-500 font-bold border border-red-200 px-2 py-1 rounded hover:bg-red-50">CANCEL</button></td></tr>`).join('')}</tbody></table>
+        </div></div>` : ''}
+
+        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Active Staff</h3>
         <div class="bg-white rounded-3xl border shadow-sm overflow-hidden mb-8">
             <table class="w-full text-left">
                 <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs text-slate-400 uppercase">User</th><th class="text-xs text-slate-400 uppercase">Role</th><th class="text-xs text-slate-400 uppercase">Loc</th><th class="text-xs text-slate-400 uppercase text-right pr-6">Action</th></tr></thead>
