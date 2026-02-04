@@ -469,53 +469,59 @@ window.viewStaffDetails = async function(id) {
     } catch(e) { handleError(e, "View Staff Details"); }
 };
 
-// --- ENTERPRISE REPORTING (CLEAN & PROFESSIONAL) ---
+// --- ENTERPRISE REPORTING (PROFESSIONAL & CLEAN) ---
 window.renderReports = async function(c) {
     try {
         const { data: trans } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name, email, role)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(2000);
-        const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name, email)').eq('organization_id', window.profile.organization_id).eq('status', 'approved');
-        const { data: invites } = await supabase.from('staff_invites').select('*, inviter:invited_by(full_name, email)').eq('organization_id', window.profile.organization_id);
+        const { data: changes } = await supabase.from('change_requests').select('*, requester:requester_id(full_name, email, role)').eq('organization_id', window.profile.organization_id).eq('status', 'approved');
+        const { data: invites } = await supabase.from('staff_invites').select('*, inviter:invited_by(full_name, email, role)').eq('organization_id', window.profile.organization_id);
 
         const combinedLogs = [];
 
-        // Helper to format User Display
-        const formatUser = (u) => {
-            if(!u) return 'SYSTEM';
-            if(u.full_name) return u.full_name;
-            if(u.email) return u.email.split('@')[0];
-            return 'Unknown';
+        // Helper: User Display
+        const formatUser = (u) => ({ name: u?.full_name || 'System', role: u?.role?.replace('_',' ') || 'Admin' });
+
+        // Helper: Format JSON to Readable Text
+        const parseDetails = (type, data) => {
+            if(type === 'EDIT_INVENTORY') return `Adjusted: ${data.new_qty} (Reason: ${data.reason})`;
+            if(type === 'VOID') return `Voided Transaction. Reason: ${data.reason || 'N/A'}`;
+            if(type === 'DELETE_PRODUCT') return `Permanently Removed Item`;
+            return data.reason || 'Authorized Action';
         };
 
         (trans||[]).forEach(t => {
+            const isVoid = t.status === 'void';
             combinedLogs.push({
                 id: t.id,
                 date: t.created_at,
-                type: t.type,
-                desc_main: t.products?.name || 'Unknown Item',
-                desc_sub: `Qty: ${window.formatNumber(t.quantity)}`,
+                type: isVoid ? 'VOID' : t.type.toUpperCase(),
+                title: t.products?.name || 'Unknown Item',
+                desc: `Qty: ${window.formatNumber(t.quantity)}`,
                 user: formatUser(t.profiles),
                 location: t.from_loc?.name ? `${t.from_loc.name} → ${t.locations?.name}` : (t.locations?.name || 'Main Store'),
                 value: t.total_value,
                 profit: t.gross_profit,
                 rawData: t,
-                category: 'financial'
+                category: 'financial',
+                search_text: `${t.type} ${t.products?.name} ${t.profiles?.full_name} ${t.from_loc?.name} ${t.locations?.name}`.toLowerCase()
             });
         });
 
         (changes||[]).forEach(ch => {
-            let readableAction = ch.action.replace('EDIT_INVENTORY', 'Stock Adjustment').replace('DELETE_PRODUCT', 'Product Deletion').replace('_', ' ');
+            const cleanType = ch.action.replace('EDIT_INVENTORY', 'ADJUST').replace('DELETE_PRODUCT', 'DELETE').replace('_', ' ');
             combinedLogs.push({
                 id: ch.id,
                 date: ch.created_at,
-                type: 'admin',
-                desc_main: readableAction,
-                desc_sub: ch.new_data?.reason || 'Authorized by Admin',
+                type: cleanType,
+                title: cleanType,
+                desc: parseDetails(ch.action, ch.new_data || {}),
                 user: formatUser(ch.requester),
-                location: 'System',
+                location: 'SYSTEM',
                 value: 0,
                 profit: 0,
                 rawData: ch,
-                category: 'admin'
+                category: 'admin',
+                search_text: `${ch.action} ${ch.requester?.full_name} ${JSON.stringify(ch.new_data)}`.toLowerCase()
             });
         });
 
@@ -523,15 +529,16 @@ window.renderReports = async function(c) {
             combinedLogs.push({
                 id: inv.id,
                 date: inv.created_at,
-                type: 'invite',
-                desc_main: `Invite: ${inv.role}`,
-                desc_sub: inv.email,
+                type: 'INVITE',
+                title: `Invited: ${inv.role}`,
+                desc: `Email: ${inv.email}`,
                 user: formatUser(inv.inviter),
-                location: '-',
+                location: 'ADMIN',
                 value: 0,
                 profit: 0,
                 rawData: inv,
-                category: 'admin'
+                category: 'admin',
+                search_text: `invite ${inv.email} ${inv.role} ${inv.inviter?.full_name}`.toLowerCase()
             });
         });
 
@@ -541,11 +548,11 @@ window.renderReports = async function(c) {
         const staffOpts = window.cachedStaff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join('');
         const template = document.getElementById('report-filters-template').content.cloneNode(true);
         
-        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Enterprise Report</h1>`;
+        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Unified Enterprise Report</h1>`;
         c.appendChild(template);
         document.getElementById('rLoc').innerHTML += locOpts;
         document.getElementById('rStaff').innerHTML += staffOpts;
-        document.getElementById('rType').innerHTML += `<option value="admin">Admin Actions</option><option value="invite">Team Invites</option>`;
+        document.getElementById('rType').innerHTML += `<option value="VOID">Voided</option><option value="ADJUST">Adjustments</option><option value="DELETE">Deletions</option><option value="INVITE">Invites</option>`;
         document.getElementById('rCat').innerHTML += PRODUCT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
 
         c.insertAdjacentHTML('beforeend', `
@@ -554,16 +561,16 @@ window.renderReports = async function(c) {
                 <div class="bg-white p-6 border rounded-xl shadow-sm"><span class="text-xs text-slate-400 font-bold uppercase tracking-widest">Gross Profit</span><div id="repProf" class="text-3xl font-bold mt-1 text-green-600">0.00</div></div>
             </div>
             <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                <table class="w-full text-left table-auto">
+                <table class="w-full text-left table-fixed">
                     <thead class="bg-slate-50 border-b">
                         <tr>
-                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Date</th>
-                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Type</th>
-                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Description</th>
-                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">User</th>
-                            <th class="p-4 text-xs font-bold uppercase text-slate-500 tracking-wider">Location</th>
+                            <th class="p-4 w-32 text-xs font-bold uppercase text-slate-500 tracking-wider">Date</th>
+                            <th class="p-4 w-24 text-xs font-bold uppercase text-slate-500 tracking-wider">Type</th>
+                            <th class="p-4 w-1/4 text-xs font-bold uppercase text-slate-500 tracking-wider">Description</th>
+                            <th class="p-4 w-1/5 text-xs font-bold uppercase text-slate-500 tracking-wider">User (Done By)</th>
+                            <th class="p-4 w-32 text-xs font-bold uppercase text-slate-500 tracking-wider">Location</th>
                             <th class="p-4 text-right text-xs font-bold uppercase text-slate-500 tracking-wider">Value</th>
-                            <th class="p-4 text-right text-xs font-bold uppercase text-slate-500 tracking-wider">Action</th>
+                            <th class="p-4 w-20 text-right text-xs font-bold uppercase text-slate-500 tracking-wider">Action</th>
                         </tr>
                     </thead>
                     <tbody id="logsBody" class="divide-y divide-slate-100"></tbody>
@@ -582,29 +589,31 @@ window.filterReport = function() {
     let f = window.currentLogs;
     if(type && type !== 'all') f = f.filter(l => l.type === type);
     if(staff && staff !== 'all') f = f.filter(l => l.rawData.user_id === staff);
-    if(search) f = f.filter(l => l.desc_main.toLowerCase().includes(search) || l.user.toLowerCase().includes(search));
+    if(search) f = f.filter(l => l.search_text.includes(search));
 
-    const revenue = f.filter(l => l.category === 'financial' && l.type === 'sale').reduce((sum, l) => sum + (l.value || 0), 0);
-    const profit = f.filter(l => l.category === 'financial' && l.type === 'sale').reduce((sum, l) => sum + (l.profit || 0), 0);
+    const revenue = f.filter(l => l.category === 'financial' && l.type === 'SALE').reduce((sum, l) => sum + (l.value || 0), 0);
+    const profit = f.filter(l => l.category === 'financial' && l.type === 'SALE').reduce((sum, l) => sum + (l.profit || 0), 0);
 
     document.getElementById('repRev').innerHTML = window.formatPrice(revenue);
     document.getElementById('repProf').innerHTML = window.formatPrice(profit);
     
     document.getElementById('logsBody').innerHTML = f.map(l => {
         let badgeClass = 'bg-slate-100 text-slate-600';
-        if(l.type === 'sale') badgeClass = 'bg-green-100 text-green-700';
-        else if(l.type === 'transfer') badgeClass = 'bg-blue-100 text-blue-700';
-        else if(l.type === 'admin' || l.type === 'void') badgeClass = 'bg-red-100 text-red-700';
-        else if(l.type === 'invite') badgeClass = 'bg-yellow-100 text-yellow-700';
+        let rowClass = 'hover:bg-slate-50';
+        
+        if(l.type === 'SALE') badgeClass = 'bg-green-100 text-green-700';
+        else if(l.type === 'TRANSFER') badgeClass = 'bg-blue-100 text-blue-700';
+        else if(l.type === 'VOID' || l.type === 'DELETE') { badgeClass = 'bg-red-100 text-red-700'; rowClass = 'bg-red-50/30 hover:bg-red-50'; }
+        else if(l.type === 'INVITE') badgeClass = 'bg-yellow-100 text-yellow-700';
 
-        return `<tr onclick="window.openReportDetails('${l.id}')" class="hover:bg-slate-50 cursor-pointer transition group">
-            <td class="p-4 whitespace-nowrap text-xs font-bold text-slate-500">${new Date(l.date).toLocaleDateString()}<br><span class="text-[10px] font-normal">${new Date(l.date).toLocaleTimeString()}</span></td>
+        return `<tr onclick="window.openReportDetails('${l.id}')" class="${rowClass} cursor-pointer transition group border-b border-slate-50 last:border-0">
+            <td class="p-4 whitespace-nowrap text-xs font-bold text-slate-500">${new Date(l.date).toLocaleDateString()}<br><span class="text-[10px] font-normal text-slate-400">${new Date(l.date).toLocaleTimeString()}</span></td>
             <td class="p-4 whitespace-nowrap"><span class="px-2 py-1 rounded text-[10px] font-bold uppercase ${badgeClass}">${l.type}</span></td>
-            <td class="p-4"><div class="font-bold text-sm text-slate-800 truncate max-w-[200px]" title="${l.desc_main}">${l.desc_main}</div><div class="text-[10px] text-slate-500 truncate max-w-[200px]">${l.desc_sub}</div></td>
-            <td class="p-4 whitespace-nowrap text-xs font-bold text-slate-700 uppercase">${l.user}</td>
-            <td class="p-4 whitespace-nowrap text-xs text-slate-500 uppercase">${l.location}</td>
-            <td class="p-4 whitespace-nowrap text-right font-mono text-xs font-bold text-slate-900">${l.value ? window.formatPrice(l.value) : '-'}</td>
-            <td class="p-4 whitespace-nowrap text-right"><span class="text-[10px] font-bold border border-slate-200 px-3 py-1 rounded-full text-slate-400 group-hover:border-blue-500 group-hover:text-blue-600 transition">VIEW</span></td>
+            <td class="p-4 overflow-hidden"><div class="font-bold text-sm text-slate-800 truncate" title="${l.title}">${l.title}</div><div class="text-[10px] text-slate-500 truncate" title="${l.desc}">${l.desc}</div></td>
+            <td class="p-4 overflow-hidden"><div class="font-bold text-xs text-slate-700 uppercase truncate">${l.user.name}</div><div class="text-[9px] text-slate-400 uppercase truncate">${l.user.role}</div></td>
+            <td class="p-4 whitespace-nowrap text-xs text-slate-500 uppercase font-bold tracking-wide">${l.location}</td>
+            <td class="p-4 whitespace-nowrap text-right font-mono text-xs font-bold ${l.type==='VOID'?'text-red-400 line-through decoration-2':'text-slate-900'}">${l.value ? window.formatPrice(l.value) : '-'}</td>
+            <td class="p-4 whitespace-nowrap text-right"><span class="text-[10px] font-bold border border-slate-200 px-3 py-1 rounded-full text-slate-400 group-hover:border-slate-900 group-hover:text-slate-900 transition">VIEW</span></td>
         </tr>`;
     }).join('');
 };
@@ -613,29 +622,38 @@ window.openReportDetails = function(id) {
     const item = window.currentLogs.find(l => l.id === id);
     if(!item) return;
     const d = item.rawData;
+    
     let content = `
-        <div class="space-y-4">
-            <div class="flex justify-between items-start">
-                <div><h3 class="font-bold text-lg uppercase text-slate-800">${item.desc_main}</h3><p class="text-xs text-slate-500">${new Date(item.date).toLocaleString()}</p></div>
-                <span class="px-3 py-1 rounded text-xs font-bold uppercase bg-slate-100">${item.type}</span>
+        <div class="space-y-6">
+            <div class="flex justify-between items-start border-b pb-4">
+                <div>
+                    <h3 class="font-bold text-xl uppercase text-slate-800">${item.title}</h3>
+                    <p class="text-xs text-slate-500 mt-1">${new Date(item.date).toLocaleString()}</p>
+                </div>
+                <span class="px-4 py-1.5 rounded-full text-xs font-bold uppercase bg-slate-900 text-white tracking-widest">${item.type}</span>
             </div>
-            <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 text-sm space-y-2">
-                <div class="flex justify-between"><span>User:</span> <span class="font-bold">${item.user}</span></div>
-                <div class="flex justify-between"><span>Location:</span> <span class="font-bold">${item.location}</span></div>
-                <div class="flex justify-between"><span>Details:</span> <span>${item.desc_sub}</span></div>
+            
+            <div class="bg-slate-50 p-6 rounded-2xl border border-slate-100 text-sm space-y-3">
+                <div class="flex justify-between items-center"><span class="text-slate-500">Performed By</span> <span class="font-bold uppercase">${item.user.name} <span class="text-slate-400 font-normal">(${item.user.role})</span></span></div>
+                <div class="flex justify-between items-center"><span class="text-slate-500">Location Context</span> <span class="font-bold uppercase">${item.location}</span></div>
+                <div class="border-t border-slate-200 my-2"></div>
+                <div class="flex justify-between items-start"><span class="text-slate-500">Full Details</span> <span class="font-bold text-right max-w-[60%]">${item.desc}</span></div>
             </div>
-            ${item.value ? `<div class="bg-slate-900 text-white p-4 rounded-xl flex justify-between items-center"><span>Total Value</span><span class="font-mono font-bold text-xl">${window.formatPrice(item.value)}</span></div>` : ''}
-            ${item.profit ? `<p class="text-center text-xs text-green-600 font-bold">Profit: ${window.formatPrice(item.profit)}</p>` : ''}
-            ${item.category === 'admin' ? `<div class="text-xs text-slate-500 bg-red-50 p-3 rounded border border-red-100"><strong>System Note:</strong><br>${JSON.stringify(d.new_data || d, null, 2)}</div>` : ''}
+
+            ${item.value ? `<div class="bg-slate-900 text-white p-5 rounded-2xl flex justify-between items-center shadow-lg"><span>Total Transaction Value</span><span class="font-mono font-bold text-2xl">${window.formatPrice(item.value)}</span></div>` : ''}
+            
+            ${item.profit ? `<div class="text-center p-2"><span class="text-xs uppercase tracking-widest text-slate-400">Gross Profit Margin</span><div class="text-green-600 font-bold font-mono text-lg">${window.formatPrice(item.profit)}</div></div>` : ''}
+            
+            ${item.category === 'admin' ? `<div class="mt-4"><p class="text-[10px] font-bold text-slate-400 uppercase mb-2">System Audit Log</p><pre class="text-[10px] bg-slate-100 p-3 rounded-lg border border-slate-200 overflow-x-auto text-slate-600 font-mono">${JSON.stringify(d.new_data || d, null, 2)}</pre></div>` : ''}
         </div>`;
     document.getElementById('modal-content').innerHTML = content;
     document.getElementById('modal').style.display = 'flex';
 };
 
 window.exportCSV = () => {
-    let rows=[["Date","Type","Description","Details","User","Location","Value","Profit"]];
+    let rows=[["Date","Type","Title","Details","User","Location","Value","Profit"]];
     window.currentLogs.forEach(l=>{
-        rows.push([new Date(l.date).toLocaleString(), l.type, l.desc_main, l.desc_sub, l.user, l.location, l.value, l.profit]);
+        rows.push([new Date(l.date).toLocaleString(), l.type, l.title, l.desc, l.user.name, l.location, l.value, l.profit]);
     });
     let c="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n");
     let link=document.createElement("a"); link.href=encodeURI(c); link.download="enterprise_report.csv"; link.click();
