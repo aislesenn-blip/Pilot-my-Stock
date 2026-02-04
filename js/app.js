@@ -1,5 +1,5 @@
 import { getSession, logout } from './auth.js';
-import { getInventory, processBarSale, getPendingApprovals } from './services.js'; 
+import { getInventory, processBarSale, getPendingApprovals } from './services.js';
 import { supabase } from './supabase.js';
 
 // --- GLOBALS ---
@@ -110,7 +110,6 @@ async function initApp() {
     try {
         let { data: prof, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
         
-        // Handle Missing Profile
         if ((error && error.code === 'PGRST116') || !prof || !prof.organization_id) {
             console.warn("User has no profile/org.");
             const nm = document.getElementById('name-modal');
@@ -125,7 +124,6 @@ async function initApp() {
 
         window.profile = prof;
 
-        // Load Caches
         const [locsRes, supsRes, staffRes] = await Promise.all([
             supabase.from('locations').select('*').eq('organization_id', window.profile.organization_id),
             supabase.from('suppliers').select('*').eq('organization_id', window.profile.organization_id),
@@ -137,7 +135,6 @@ async function initApp() {
 
         await window.initCurrency();
 
-        // RBAC UI Cleanup
         const role = window.profile.role;
         const remove = (ids) => ids.forEach(id => { const el = document.getElementById(id); if(el) el.remove(); });
 
@@ -393,7 +390,7 @@ window.renderApprovals = async function(c) {
     try {
         // 1. Fetch Stock Transfers (Moves)
         const { data: reqs } = await supabase.from('stock_requests')
-            .select(`*, products(name, unit, conversion_factor), from_loc:from_location_id(name), to_loc:to_location_id(name)`)
+            .select(`*, products(name, unit, conversion_factor), from_loc:from_location_id(name), to_loc:to_location_id(name, type)`)
             .eq('organization_id', window.profile.organization_id)
             .eq('status', 'pending');
 
@@ -407,10 +404,14 @@ window.renderApprovals = async function(c) {
         if (reqs && reqs.length > 0) {
             transferRows = reqs.map(r => {
                 const factor = r.products?.conversion_factor || 1;
-                const incomingQty = r.quantity * factor;
-                const conversionText = factor > 1 
-                    ? `<span class="block text-[10px] text-green-600 font-bold bg-green-50 px-2 py-1 rounded mt-1">⚠️ Will arrive as: ${incomingQty} Pcs</span>` 
-                    : '';
+                const isGoingToDepartment = r.to_loc?.type === 'department';
+                const incomingQty = isGoingToDepartment ? (r.quantity * factor) : r.quantity;
+                let conversionText = '';
+                if (factor > 1 && isGoingToDepartment) {
+                    conversionText = `<span class="block text-[10px] text-green-600 font-bold bg-green-50 px-2 py-1 rounded mt-1">⚠️ Converting to: ${incomingQty} Pcs (Retail)</span>`;
+                } else if (factor > 1 && !isGoingToDepartment) {
+                    conversionText = `<span class="block text-[10px] text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded mt-1">ℹ️ Moving as Bulk: ${r.quantity} Crates</span>`;
+                }
 
                 return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition">
                     <td class="p-6"><div class="font-bold text-sm uppercase text-slate-900">${r.products?.name}</div><div class="text-xs text-slate-400 uppercase mt-1">From: ${r.from_loc?.name || 'Main'}</div></td>
@@ -418,7 +419,7 @@ window.renderApprovals = async function(c) {
                         <div class="text-blue-600 font-mono font-bold text-lg">${r.quantity} <span class="text-xs text-slate-400">${r.products?.unit}</span></div>
                         ${conversionText}
                     </td>
-                    <td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name}</td>
+                    <td class="p-6 text-xs font-bold text-slate-500 uppercase tracking-wider">To: ${r.to_loc?.name} <br><span class="text-[9px] text-slate-400">(${r.to_loc?.type})</span></td>
                     <td class="p-6 text-right"><button onclick="window.confirmApprove('${r.id}')" class="text-[10px] bg-slate-900 text-white px-6 py-3 rounded-xl font-bold hover:bg-slate-800 transition shadow-lg">AUTHORIZE</button></td>
                 </tr>`;
             }).join('');
@@ -431,10 +432,7 @@ window.renderApprovals = async function(c) {
             adminRows = changes.map(r => {
                 let details = '';
                 if (r.action === 'EDIT_INVENTORY') {
-                    details = `<div class="mt-1 text-xs text-slate-600 bg-yellow-50 p-2 rounded border border-yellow-100">
-                        <span class="block font-bold">New Qty: ${r.new_data?.new_qty}</span>
-                        <span class="block italic">Reason: "${r.new_data?.reason}"</span>
-                    </div>`;
+                    details = `<div class="mt-1 text-xs text-slate-600 bg-yellow-50 p-2 rounded border border-yellow-100"><span class="block font-bold">New Qty: ${r.new_data?.new_qty}</span><span class="block italic">Reason: "${r.new_data?.reason}"</span></div>`;
                 } else if (r.action === 'VOID') {
                     details = `<div class="mt-1 text-xs text-red-600 bg-red-50 p-2 rounded border border-red-100 font-bold">Request to VOID Transaction</div>`;
                 } else if (r.action === 'SUSPEND_USER') {
@@ -442,37 +440,13 @@ window.renderApprovals = async function(c) {
                 } else if (r.action === 'DELETE_PRODUCT') {
                     details = `<div class="mt-1 text-xs text-red-600 font-bold">Action: Permanently Delete Item</div>`;
                 }
-
-                return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition">
-                    <td class="p-6">
-                        <div class="font-bold text-sm uppercase text-red-600">${r.action.replace('_', ' ')}</div>
-                        <div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div>
-                        ${details}
-                    </td>
-                    <td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td>
-                    <td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td>
-                </tr>`;
+                return `<tr class="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition"><td class="p-6"><div class="font-bold text-sm uppercase text-red-600">${r.action.replace('_', ' ')}</div><div class="text-xs text-slate-400 uppercase mt-1">By: ${r.requester?.full_name}</div>${details}</td><td class="p-6 text-xs font-mono text-slate-500">${new Date(r.created_at).toLocaleString()}</td><td class="p-6 text-right"><button onclick="window.approveChange('${r.id}')" class="text-[10px] bg-red-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-700 transition shadow-lg">APPROVE</button></td></tr>`;
             }).join('');
         } else {
             adminRows = '<tr><td colspan="3" class="p-8 text-center text-xs font-bold text-slate-300 uppercase">No admin requests.</td></tr>';
         }
 
-        c.innerHTML = `
-        <h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1>
-        
-        <div class="mb-8">
-            <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3>
-            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                <table class="w-full text-left"><tbody>${transferRows}</tbody></table>
-            </div>
-        </div>
-
-        <div>
-            <h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust/Suspend)</h3>
-            <div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                <table class="w-full text-left"><tbody>${adminRows}</tbody></table>
-            </div>
-        </div>`;
+        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900 tracking-tight">Pending Approvals</h1><div class="mb-8"><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Stock Transfers</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${transferRows}</tbody></table></div></div><div><h3 class="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Admin Requests (Void/Adjust/Suspend)</h3><div class="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden"><table class="w-full text-left"><tbody>${adminRows}</tbody></table></div></div>`;
     } catch(e) { handleError(e, "Render Approvals"); }
 };
 
@@ -563,29 +537,114 @@ window.viewStaffDetails = async function(id) {
     } catch(e) { handleError(e, "View Staff Details"); }
 };
 
-// --- REPORTS (UPDATED MATH) ---
+// --- ENTERPRISE REPORTING (NOW UNIFIED) ---
 window.renderReports = async function(c) {
     try {
-        const { data: logs } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(2000);
-        window.currentLogs = logs || [];
+        // 1. Fetch Financial Transactions (Sales/Purchases/Transfers)
+        const { data: trans } = await supabase.from('transactions')
+            .select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name)`)
+            .eq('organization_id', window.profile.organization_id)
+            .order('created_at', { ascending: false }).limit(2000);
+
+        // 2. Fetch Admin Changes (Approved Edits/Voids/Deletes)
+        const { data: changes } = await supabase.from('change_requests')
+            .select('*, requester:requester_id(full_name)')
+            .eq('organization_id', window.profile.organization_id)
+            .eq('status', 'approved');
+
+        // 3. Fetch Invites
+        const { data: invites } = await supabase.from('staff_invites')
+            .select('*, inviter:invited_by(full_name)')
+            .eq('organization_id', window.profile.organization_id);
+
+        // MERGE DATA INTO UNIFIED LOG
+        // We map everything to a standard format for the table
+        const combinedLogs = [];
+
+        // Add Transactions
+        (trans||[]).forEach(t => {
+            combinedLogs.push({
+                id: t.id,
+                date: t.created_at,
+                type: t.type, // sale, purchase, transfer
+                description: `${t.products?.name} (${t.quantity} qty)`,
+                user: t.profiles?.full_name || 'System',
+                location: t.from_loc?.name ? `${t.from_loc.name} -> ${t.locations?.name}` : t.locations?.name || 'Main',
+                value: t.total_value,
+                profit: t.gross_profit,
+                rawData: t,
+                category: 'financial'
+            });
+        });
+
+        // Add Admin Changes
+        (changes||[]).forEach(ch => {
+            combinedLogs.push({
+                id: ch.id,
+                date: ch.created_at,
+                type: 'admin_action',
+                description: `ACTION: ${ch.action} - ${ch.new_data?.reason || 'No reason'}`,
+                user: ch.requester?.full_name || 'Admin',
+                location: 'System',
+                value: 0,
+                profit: 0,
+                rawData: ch,
+                category: 'admin'
+            });
+        });
+
+        // Add Invites
+        (invites||[]).forEach(inv => {
+            combinedLogs.push({
+                id: inv.id,
+                date: inv.created_at,
+                type: 'team_invite',
+                description: `INVITE: ${inv.email} as ${inv.role}`,
+                user: inv.inviter?.full_name || 'Admin',
+                location: '-',
+                value: 0,
+                profit: 0,
+                rawData: inv,
+                category: 'admin'
+            });
+        });
+
+        // Sort by Date (Newest First)
+        window.currentLogs = combinedLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
 
         const locOpts = window.cachedLocations.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
         const staffOpts = window.cachedStaff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join('');
         const template = document.getElementById('report-filters-template').content.cloneNode(true);
-        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Enterprise Reporting</h1>`;
+        
+        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Unified Enterprise Report</h1>`;
         c.appendChild(template);
         document.getElementById('rLoc').innerHTML += locOpts;
         document.getElementById('rStaff').innerHTML += staffOpts;
+        
+        // Add extra options to Type Filter
+        const typeSelect = document.getElementById('rType');
+        if(typeSelect) typeSelect.innerHTML += `<option value="admin_action">Admin Actions</option><option value="team_invite">Team Invites</option>`;
+
         document.getElementById('rCat').innerHTML += PRODUCT_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
 
         c.insertAdjacentHTML('beforeend', `
             <div class="grid grid-cols-2 gap-4 mb-6">
-                <div class="bg-white p-6 border rounded-xl shadow-sm"><span class="text-xs text-slate-400 font-bold uppercase tracking-widest">Total Sales</span><div id="repRev" class="text-3xl font-bold mt-1 text-slate-900">0.00</div></div>
+                <div class="bg-white p-6 border rounded-xl shadow-sm"><span class="text-xs text-slate-400 font-bold uppercase tracking-widest">Total Revenue</span><div id="repRev" class="text-3xl font-bold mt-1 text-slate-900">0.00</div></div>
                 <div class="bg-white p-6 border rounded-xl shadow-sm"><span class="text-xs text-slate-400 font-bold uppercase tracking-widest">Gross Profit</span><div id="repProf" class="text-3xl font-bold mt-1 text-green-600">0.00</div></div>
             </div>
             <div class="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
                 <table class="w-full text-left">
-                    <thead class="bg-slate-50 border-b"><tr><th class="p-4 text-xs font-bold uppercase text-slate-500">Date</th><th class="text-xs font-bold uppercase text-slate-500">Type</th><th class="text-xs font-bold uppercase text-slate-500">Item</th><th class="text-xs font-bold uppercase text-slate-500">Route</th><th class="text-right text-xs font-bold uppercase text-slate-500">Qty</th><th class="text-right text-xs font-bold uppercase text-slate-500">Cost</th><th class="text-right text-xs font-bold uppercase text-slate-500">Value</th><th class="text-right text-xs font-bold uppercase text-slate-500 pr-4">Profit</th></tr></thead>
+                    <thead class="bg-slate-50 border-b">
+                        <tr>
+                            <th class="p-4 text-xs font-bold uppercase text-slate-500">Date/Time</th>
+                            <th class="text-xs font-bold uppercase text-slate-500">Type</th>
+                            <th class="text-xs font-bold uppercase text-slate-500">Description</th>
+                            <th class="text-xs font-bold uppercase text-slate-500">User (Done By)</th>
+                            <th class="text-xs font-bold uppercase text-slate-500">Location</th>
+                            <th class="text-right text-xs font-bold uppercase text-slate-500">Value</th>
+                            <th class="text-right text-xs font-bold uppercase text-slate-500 pr-4">Action</th>
+                        </tr>
+                    </thead>
                     <tbody id="logsBody"></tbody>
                 </table>
             </div>`);
@@ -596,49 +655,104 @@ window.renderReports = async function(c) {
 window.filterReport = function() {
     const loc = document.getElementById('rLoc')?.value;
     const staff = document.getElementById('rStaff')?.value;
-    const pay = document.getElementById('rPay')?.value;
-    const cat = document.getElementById('rCat')?.value;
     const type = document.getElementById('rType')?.value;
     const search = document.getElementById('rSearch')?.value.toLowerCase();
+    
     let f = window.currentLogs;
-    const start = document.getElementById('rStart')?.value;
-    const end = document.getElementById('rEnd')?.value;
-    if(start) f = f.filter(l => new Date(l.created_at) >= new Date(start));
-    if(end) f = f.filter(l => new Date(l.created_at) <= new Date(end + 'T23:59:59'));
-    if(cat && cat !== 'all') f = f.filter(l => l.products?.category === cat);
+    
+    // Filters
     if(type && type !== 'all') f = f.filter(l => l.type === type);
-    if(loc && loc !== 'all') f = f.filter(l => l.to_location_id === loc || l.from_location_id === loc);
-    if(staff && staff !== 'all') f = f.filter(l => l.user_id === staff);
-    if(pay && pay !== 'all') f = f.filter(l => (l.payment_method||'').includes(pay));
-    if(search) f = f.filter(l => l.products?.name.toLowerCase().includes(search));
+    if(staff && staff !== 'all') f = f.filter(l => l.user === staff || (l.rawData.user_id === staff));
+    if(search) f = f.filter(l => l.description.toLowerCase().includes(search) || l.user.toLowerCase().includes(search));
 
-    // ACCURATE CALCULATIONS
-    const revenue = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.total_value || 0), 0);
-    const profit = f.filter(l => l.type === 'sale' && l.status !== 'void').reduce((sum, l) => sum + (l.gross_profit || 0), 0);
+    // Calculate Financials only from 'financial' category
+    const revenue = f.filter(l => l.category === 'financial' && l.type === 'sale').reduce((sum, l) => sum + (l.value || 0), 0);
+    const profit = f.filter(l => l.category === 'financial' && l.type === 'sale').reduce((sum, l) => sum + (l.profit || 0), 0);
 
     document.getElementById('repRev').innerHTML = window.formatPrice(revenue);
     document.getElementById('repProf').innerHTML = window.formatPrice(profit);
+    
     document.getElementById('logsBody').innerHTML = f.map(l => `
-        <tr class="border-b hover:bg-slate-50 ${l.status==='void'?'opacity-50 line-through':''} group">
-            <td class="p-4 text-xs font-bold text-slate-500">${new Date(l.created_at).toLocaleDateString()}</td>
-            <td class="text-xs font-bold uppercase"><span class="px-2 py-1 rounded bg-slate-100">${l.type}</span></td>
-            <td class="text-xs font-bold text-slate-700">${l.products?.name}</td>
-            <td class="text-xs text-slate-500 uppercase">${l.from_loc?.name || 'Unknown'} ➝ ${l.type === 'sale' ? 'Client' : l.locations?.name}</td>
-            <td class="text-right font-mono text-xs">${l.quantity}</td>
-            <td class="text-right font-mono text-xs text-slate-400">${window.formatPrice(l.unit_cost_snapshot)}</td>
-            <td class="text-right font-mono text-xs font-bold text-slate-900">${window.formatPrice(l.total_value)}</td>
-            <td class="text-right font-mono text-xs font-bold text-green-600 pr-4">${window.formatPrice(l.gross_profit)}</td>
-            ${window.profile.role === 'financial_controller' && l.status !== 'void' ? `<td class="text-right"><button onclick="window.requestDeleteTransaction('${l.id}')" class="text-[10px] text-red-500 border border-red-200 px-2 py-1 rounded hover:bg-red-50">VOID</button></td>` : ''}
+        <tr onclick="window.openReportDetails('${l.id}')" class="border-b hover:bg-blue-50 cursor-pointer transition group">
+            <td class="p-4 text-xs font-bold text-slate-500">${new Date(l.date).toLocaleString()}</td>
+            <td class="text-xs font-bold uppercase"><span class="px-2 py-1 rounded ${l.category==='admin'?'bg-red-50 text-red-600':'bg-slate-100'}">${l.type.replace('_',' ')}</span></td>
+            <td class="text-xs font-bold text-slate-700">${l.description}</td>
+            <td class="text-xs text-slate-600 uppercase font-bold">${l.user}</td>
+            <td class="text-xs text-slate-500 uppercase">${l.location}</td>
+            <td class="text-right font-mono text-xs font-bold text-slate-900">${l.value ? window.formatPrice(l.value) : '-'}</td>
+            <td class="text-right pr-4"><span class="text-[10px] bg-white border px-2 py-1 rounded text-slate-400 group-hover:border-blue-300 group-hover:text-blue-500">VIEW</span></td>
         </tr>`).join('');
 };
 
+window.openReportDetails = function(id) {
+    const item = window.currentLogs.find(l => l.id === id);
+    if(!item) return;
+
+    let content = '';
+    const d = item.rawData;
+
+    if (item.type === 'sale' || item.type === 'purchase' || item.type === 'transfer') {
+        content = `
+            <div class="space-y-4">
+                <div class="bg-slate-50 p-4 rounded-xl border">
+                    <h4 class="font-bold text-sm uppercase text-slate-500 mb-2">Transaction Details</h4>
+                    <p><strong>Item:</strong> ${d.products?.name}</p>
+                    <p><strong>Quantity:</strong> ${d.quantity}</p>
+                    <p><strong>Type:</strong> ${d.type.toUpperCase()}</p>
+                    <p><strong>Date:</strong> ${new Date(d.created_at).toLocaleString()}</p>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                        <span class="text-xs text-slate-500 uppercase">From</span>
+                        <p class="font-bold">${d.from_loc?.name || 'External/Stock'}</p>
+                    </div>
+                    <div class="bg-green-50 p-4 rounded-xl border border-green-100">
+                        <span class="text-xs text-slate-500 uppercase">To</span>
+                        <p class="font-bold">${d.locations?.name || 'Client'}</p>
+                    </div>
+                </div>
+                <div class="bg-slate-900 text-white p-4 rounded-xl flex justify-between items-center">
+                    <span>Total Value</span>
+                    <span class="font-mono font-bold text-xl">${window.formatPrice(d.total_value)}</span>
+                </div>
+                ${d.gross_profit ? `<p class="text-center text-xs text-green-600 font-bold">Profit: ${window.formatPrice(d.gross_profit)}</p>` : ''}
+            </div>
+        `;
+    } else if (item.type === 'admin_action') {
+        content = `
+            <div class="bg-red-50 p-6 rounded-xl border border-red-100 text-center">
+                <h3 class="text-red-600 font-bold text-lg mb-2">ADMIN ACTION: ${d.action}</h3>
+                <p class="text-slate-600 mb-4">${new Date(d.created_at).toLocaleString()}</p>
+                <div class="text-left bg-white p-4 rounded border">
+                    <p class="text-sm"><strong>Performed By:</strong> ${item.user}</p>
+                    <p class="text-sm mt-2"><strong>Reason/Details:</strong></p>
+                    <pre class="text-xs bg-slate-50 p-2 rounded mt-1 overflow-auto">${JSON.stringify(d.new_data || d, null, 2)}</pre>
+                </div>
+            </div>
+        `;
+    } else if (item.type === 'team_invite') {
+        content = `
+            <div class="bg-yellow-50 p-6 rounded-xl border border-yellow-100 text-center">
+                <h3 class="text-yellow-700 font-bold text-lg mb-2">TEAM INVITATION</h3>
+                <p><strong>Email:</strong> ${d.email}</p>
+                <p><strong>Role:</strong> ${d.role}</p>
+                <p><strong>Status:</strong> ${d.status}</p>
+                <p class="mt-4 text-xs text-slate-500">Invited by: ${item.user}</p>
+            </div>
+        `;
+    }
+
+    document.getElementById('modal-content').innerHTML = content;
+    document.getElementById('modal').style.display = 'flex';
+};
+
 window.exportCSV = () => {
-    let rows=[["Date","Type","Item","From","To","Qty","Cost","Value","Profit"]];
+    let rows=[["Date","Type","Description","User","Location","Value","Profit"]];
     window.currentLogs.forEach(l=>{
-        rows.push([new Date(l.created_at).toLocaleDateString(),l.type,l.products?.name,l.from_loc?.name,l.locations?.name,l.quantity,l.unit_cost_snapshot,l.total_value,l.gross_profit]);
+        rows.push([new Date(l.date).toLocaleString(),l.type,l.description,l.user,l.location,l.value,l.profit]);
     });
     let c="data:text/csv;charset=utf-8,"+rows.map(e=>e.join(",")).join("\n");
-    let link=document.createElement("a"); link.href=encodeURI(c); link.download="report.csv"; link.click();
+    let link=document.createElement("a"); link.href=encodeURI(c); link.download="enterprise_report.csv"; link.click();
 };
 
 // --- ACTION REQUESTS (AUTHORIZATION CHAIN) ---
