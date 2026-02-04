@@ -469,7 +469,7 @@ window.viewStaffDetails = async function(id) {
     } catch(e) { handleError(e, "View Staff Details"); }
 };
 
-// --- ENTERPRISE REPORTING (PROFESSIONAL & CLEAN) ---
+// --- ENTERPRISE REPORTING (FIXED FILTERS) ---
 window.renderReports = async function(c) {
     try {
         const { data: trans } = await supabase.from('transactions').select(`*, products(name, category), locations:to_location_id(name), from_loc:from_location_id(name), profiles:user_id(full_name, email, role)`).eq('organization_id', window.profile.organization_id).order('created_at', { ascending: false }).limit(2000);
@@ -477,11 +477,7 @@ window.renderReports = async function(c) {
         const { data: invites } = await supabase.from('staff_invites').select('*, inviter:invited_by(full_name, email, role)').eq('organization_id', window.profile.organization_id);
 
         const combinedLogs = [];
-
-        // Helper: User Display
         const formatUser = (u) => ({ name: u?.full_name || 'System', role: u?.role?.replace('_',' ') || 'Admin' });
-
-        // Helper: Format JSON to Readable Text
         const parseDetails = (type, data) => {
             if(type === 'EDIT_INVENTORY') return `Adjusted: ${data.new_qty} (Reason: ${data.reason})`;
             if(type === 'VOID') return `Voided Transaction. Reason: ${data.reason || 'N/A'}`;
@@ -548,7 +544,7 @@ window.renderReports = async function(c) {
         const staffOpts = window.cachedStaff.map(s => `<option value="${s.id}">${s.full_name}</option>`).join('');
         const template = document.getElementById('report-filters-template').content.cloneNode(true);
         
-        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Unified Enterprise Report</h1>`;
+        c.innerHTML = `<h1 class="text-3xl font-bold mb-8 uppercase text-slate-900">Enterprise Report</h1>`;
         c.appendChild(template);
         document.getElementById('rLoc').innerHTML += locOpts;
         document.getElementById('rStaff').innerHTML += staffOpts;
@@ -581,22 +577,71 @@ window.renderReports = async function(c) {
 };
 
 window.filterReport = function() {
-    const loc = document.getElementById('rLoc')?.value;
-    const staff = document.getElementById('rStaff')?.value;
-    const type = document.getElementById('rType')?.value;
-    const search = document.getElementById('rSearch')?.value.toLowerCase();
-    
-    let f = window.currentLogs;
-    if(type && type !== 'all') f = f.filter(l => l.type === type);
-    if(staff && staff !== 'all') f = f.filter(l => l.rawData.user_id === staff);
-    if(search) f = f.filter(l => l.search_text.includes(search));
+    // 1. Get Values
+    const loc = document.getElementById('rLoc').value;
+    const staff = document.getElementById('rStaff').value;
+    const pay = document.getElementById('rPay').value;
+    const cat = document.getElementById('rCat').value;
+    const type = document.getElementById('rType').value;
+    const start = document.getElementById('rStart').value;
+    const end = document.getElementById('rEnd').value;
+    const search = document.getElementById('rSearch').value.toLowerCase();
 
+    let f = window.currentLogs; // Start with all data
+
+    // 2. Apply Date Filter (Global)
+    if(start) f = f.filter(l => new Date(l.date) >= new Date(start));
+    if(end) f = f.filter(l => new Date(l.date) <= new Date(end + 'T23:59:59'));
+
+    // 3. Apply Type Filter (Global - SALE, TRANSFER, ADMIN, etc.)
+    if(type && type !== 'all') f = f.filter(l => l.type === type);
+
+    // 4. Apply Location Filter (Complex - Checks From/To)
+    if(loc && loc !== 'all') {
+        f = f.filter(l => {
+            const d = l.rawData;
+            // Financial: Check From OR To (so you see items leaving AND entering a location)
+            if(l.category === 'financial') return d.to_location_id === loc || d.from_location_id === loc;
+            // Invite: Check Assigned Location
+            if(l.category === 'invite') return d.assigned_location_id === loc;
+            return false;
+        });
+    }
+
+    // 5. Apply Staff Filter (Complex - Checks User ID)
+    if(staff && staff !== 'all') {
+        f = f.filter(l => {
+            const d = l.rawData;
+            if(l.category === 'financial') return d.user_id === staff;
+            if(l.category === 'admin') return d.requester_id === staff;
+            if(l.category === 'invite') return d.invited_by === staff;
+            return false;
+        });
+    }
+
+    // 6. Apply Category Filter (Specific to Products - Hides Admin Logs)
+    if(cat && cat !== 'all') {
+        f = f.filter(l => l.category === 'financial' && l.rawData.products?.category === cat);
+    }
+
+    // 7. Apply Payment Filter (Specific to Sales - Hides Admin Logs)
+    if(pay && pay !== 'all') {
+        f = f.filter(l => l.category === 'financial' && l.rawData.payment_method === pay);
+    }
+
+    // 8. Search
+    if(search) {
+        f = f.filter(l => l.search_text.includes(search));
+    }
+
+    // 9. Calculate Totals (Only from VALID Sales, ignore Voids/Transfers/Admin)
     const revenue = f.filter(l => l.category === 'financial' && l.type === 'SALE').reduce((sum, l) => sum + (l.value || 0), 0);
     const profit = f.filter(l => l.category === 'financial' && l.type === 'SALE').reduce((sum, l) => sum + (l.profit || 0), 0);
 
     document.getElementById('repRev').innerHTML = window.formatPrice(revenue);
     document.getElementById('repProf').innerHTML = window.formatPrice(profit);
     
+    // 10. Render Rows
     document.getElementById('logsBody').innerHTML = f.map(l => {
         let badgeClass = 'bg-slate-100 text-slate-600';
         let rowClass = 'hover:bg-slate-50';
